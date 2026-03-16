@@ -1,0 +1,20 @@
+{{- if .Values.argocdHealthMonitor.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-health-monitor-playbooks
+  namespace: open-cluster-management
+  labels:
+    app.kubernetes.io/name: argocd-health-monitor
+data:
+  argocd-health-monitor-job.yml: |
+{{ .Files.Get "scripts/ansible/argocd-health-monitor-job.yml" | indent 4 }}
+  argocd-health-monitor-cron.yml: |
+{{ .Files.Get "scripts/ansible/argocd-health-monitor-cron.yml" | indent 4 }}
+  tasks_kubeconfig.yml: |
+{{ .Files.Get "scripts/ansible/tasks/kubeconfig.yml" | indent 4 }}
+  tasks_get_managed_clusters.yml: |
+{{ .Files.Get "scripts/ansible/tasks/get_managed_clusters.yml" | indent 4 }}
+  tasks_argocd_health_check_one_attempt.yml: |
+{{ .Files.Get "scripts/ansible/tasks/argocd-health-check-one-attempt.yml" | indent 4 }}
+{{- end }}

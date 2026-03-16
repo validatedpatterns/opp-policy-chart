@@ -1,0 +1,114 @@
+# One attempt: download kubeconfigs, check wedged, remediate, set all_healthy.
+# Vars: expected_clusters, attempt, max_attempts, sleep_interval, force_sync_*, cluster_argocd_*, argocd_namespace.
+- name: Reset wedged list for this attempt
+  set_fact:
+    wedged_clusters: []
+
+- name: Download kubeconfig for each cluster
+  include_tasks: kubeconfig.yml
+  loop: "{{ expected_clusters }}"
+  loop_control:
+    label: "{{ item }}"
+  vars:
+    cluster: "{{ item }}"
+    kubeconfig_path: "/tmp/{{ item }}-kubeconfig.yaml"
+    check_available: false
+  register: kc_download
+  ignore_errors: true
+
+- name: Set kubeconfig failures from download results
+  set_fact:
+    kubeconfig_failures: "{{ (kc_download.results | default([]) | selectattr('failed', true) | map(attribute='item') | list) }}"
+
+- name: Fail on last attempt when kubeconfig failures
+  fail:
+    msg: "Cannot access clusters after {{ max_attempts }} attempts: {{ kubeconfig_failures }}"
+  when: kubeconfig_failures | default([]) | length > 0 and attempt | int >= max_attempts
+
+- name: Pause and retry when kubeconfig failures
+  pause:
+    seconds: "{{ sleep_interval }}"
+  when: kubeconfig_failures | default([]) | length > 0 and attempt | int < max_attempts
+
+- name: Check each cluster for wedged state
+  block:
+    - name: Check nodes reachable on {{ item }}
+      kubernetes.core.k8s_info:
+        kind: Node
+        kubeconfig: "/tmp/{{ item }}-kubeconfig.yaml"
+      register: nodes_result
+      loop: "{{ expected_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      when: item not in (kubeconfig_failures | default([]))
+      ignore_errors: true
+
+    - name: Mark wedged when nodes unreachable
+      set_fact:
+        wedged_clusters: "{{ wedged_clusters | default([]) + [item.item] }}"
+      loop: "{{ nodes_result.results | default([]) }}"
+      when: item is failed or (item.resources | default([]) | length == 0)
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Check ArgoCD namespace and pods on {{ item }}
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ cluster_argocd_namespace }}"
+        kubeconfig: "/tmp/{{ item }}-kubeconfig.yaml"
+        label_selectors:
+          - "app.kubernetes.io/name={{ cluster_argocd_instance }}"
+      register: argocd_pods_result
+      loop: "{{ expected_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      when: item not in (kubeconfig_failures | default([])) and item not in (wedged_clusters | default([]))
+      vars:
+        cluster: "{{ item }}"
+
+    - name: Mark wedged when gitops-server pod count != 1
+      set_fact:
+        wedged_clusters: "{{ wedged_clusters | default([]) + [item.item] }}"
+      loop: "{{ argocd_pods_result.results | default([]) }}"
+      when: (item.resources | default([]) | length) != 1
+      loop_control:
+        label: "{{ item.item }}"
+  when: kubeconfig_failures | default([]) | length == 0
+
+- name: Remediate wedged clusters (force sync Application)
+  kubernetes.core.k8s:
+    state: present
+    merge: true
+    definition:
+      apiVersion: argoproj.io/v1alpha1
+      kind: Application
+      metadata:
+        name: "{{ force_sync_app_name }}"
+        namespace: "{{ force_sync_app_namespace }}"
+      operation:
+        sync:
+          resources:
+            - kind: "{{ force_sync_resource_kind }}"
+              name: "{{ force_sync_resource_name }}"
+          syncOptions:
+            - "Force=true"
+    kubeconfig: "/tmp/{{ item }}-kubeconfig.yaml"
+  loop: "{{ wedged_clusters | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when: wedged_clusters | default([]) | length > 0
+  ignore_errors: true
+
+- name: Set all_healthy
+  set_fact:
+    all_healthy: "{{ (wedged_clusters | default([]) | length == 0) and (kubeconfig_failures | default([]) | length == 0) }}"
+
+- name: Pause before next attempt when wedged
+  pause:
+    seconds: "{{ sleep_interval }}"
+  when: not all_healthy and (wedged_clusters | default([]) | length > 0)
+
+- name: Fail on last attempt when not all healthy
+  fail:
+    msg: "Argo CD instances not healthy after {{ max_attempts }} attempts. Wedged: {{ wedged_clusters | default([]) }}."
+  when: attempt | int >= max_attempts and not all_healthy

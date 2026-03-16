@@ -1,0 +1,21 @@
+# Extract CA from a cluster. Vars: cluster_name, output_path, kubeconfig_path (omit for hub).
+- name: Get trusted-ca-bundle ConfigMap
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    name: trusted-ca-bundle
+    namespace: openshift-config-managed
+    kubeconfig: "{{ kubeconfig_path | default(omit) }}"
+  register: ca_cm
+  ignore_errors: true
+
+- name: Set CA content from ConfigMap data
+  set_fact:
+    ca_content: "{{ (ca_cm.resources[0].data.get('ca-bundle.crt') or ca_cm.resources[0].data.get('ca-bundle\\.crt', '')) if (ca_cm.resources | length > 0 and ca_cm.resources[0].data) else '' }}"
+  when: ca_cm.resources | length > 0
+
+- name: Write cluster CA to file
+  copy:
+    content: "{{ ca_content }}"
+    dest: "{{ output_path }}"
+    mode: '0644'
+  when: ca_content is defined and ca_content != ''

@@ -21,7 +21,8 @@ spec:
       restartPolicy: Never
       containers:
       - name: odf-ssl-precheck
-        image: registry.redhat.io/openshift4/ose-cli:latest
+        image: quay.io/validatedpatterns/utility-container:latest
+        workingDir: /playbooks
         resources:
           requests:
             memory: "64Mi"
@@ -35,7 +36,25 @@ spec:
         - name: SECONDARY_CLUSTER
           value: {{ include "opp.secondaryClusterName" . | quote }}
         command:
-        - /bin/bash
+        - ansible-playbook
+        args:
+        - -i
+        - localhost,
         - -c
-        - |
-          {{- .Files.Get "scripts/odf-ssl-precheck.sh" | nindent 10 }}
+        - local
+        - /playbooks/odf-ssl-precheck.yml
+        volumeMounts:
+        - name: playbooks
+          mountPath: /playbooks
+          readOnly: true
+      volumes:
+      - name: playbooks
+        configMap:
+          name: odf-ssl-precheck-playbooks
+          items:
+          - key: odf-ssl-precheck.yml
+            path: odf-ssl-precheck.yml
+          - key: tasks_kubeconfig.yml
+            path: tasks/kubeconfig.yml
+          - key: tasks_get_managed_clusters.yml
+            path: tasks/get_managed_clusters.yml

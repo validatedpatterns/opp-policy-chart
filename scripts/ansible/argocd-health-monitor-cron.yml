@@ -1,0 +1,82 @@
+---
+# ArgoCD health monitor - CronJob (runs every 15 min). Check and remediate wedged clusters.
+# Requires: kubernetes.core. Run: ansible-playbook -i localhost, -c local argocd-health-monitor-cron.yml
+- name: ArgoCD health monitoring (CronJob)
+  hosts: localhost
+  gather_facts: true
+  vars:
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    force_sync_app_namespace: "{{ lookup('env', 'FORCE_SYNC_APP_NAMESPACE') | default('openshift-gitops', true) }}"
+    force_sync_app_name: "{{ lookup('env', 'FORCE_SYNC_APP_NAME') | default('ramendr-starter-kit-resilient', true) }}"
+    force_sync_resource_kind: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_KIND') | default('Namespace', true) }}"
+    force_sync_resource_name: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_NAME') | default('ramendr-starter-kit-resilient', true) }}"
+    argocd_namespace: "openshift-gitops"
+    max_attempts: 270
+    sleep_interval: 20
+    cluster_argocd_namespace: "ramendr-starter-kit-resilient"
+    cluster_argocd_instance: "resilient-gitops-server"
+  tasks:
+    - name: Set hub kubeconfig
+      set_fact:
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) }}"
+
+    - name: Get managed clusters (hub)
+      kubernetes.core.k8s_info:
+        kind: ManagedCluster
+      register: managed_clusters_result
+
+    - name: Set expected clusters (exclude local-cluster)
+      set_fact:
+        expected_clusters: "{{ (managed_clusters_result.resources | default([]) | map(attribute='metadata.name') | reject('equalto', 'local-cluster') | list) }}"
+
+    - name: Fail when no managed clusters
+      fail:
+        msg: "No managed clusters found - health monitor cannot function."
+      when: expected_clusters | length == 0
+
+    - name: Run one health check and remediate
+      include_tasks: tasks/argocd-health-check-one-attempt.yml
+      vars:
+        attempt: 1
+        max_attempts: 1
+
+    - name: Get gitops server pod on wedged cluster
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ argocd_namespace }}"
+        kubeconfig: "/tmp/{{ item }}-kubeconfig.yaml"
+        label_selectors:
+          - "app.kubernetes.io/name=openshift-gitops-server"
+      register: server_pod_result
+      loop: "{{ wedged_clusters | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      when: wedged_clusters | default([]) | length > 0
+      ignore_errors: true
+
+    - name: Trigger ArgoCD app refresh on wedged cluster
+      shell: |
+        set -e
+        if [ -n "{{ pod_name }}" ]; then
+          oc --kubeconfig="{{ kubeconfig_path }}" exec -n {{ argocd_namespace }} "{{ pod_name }}" -- argocd app list --server localhost:8080 -o name | while read app; do
+            [ -z "$app" ] || oc --kubeconfig="{{ kubeconfig_path }}" exec -n {{ argocd_namespace }} "{{ pod_name }}" -- argocd app get "$app" --server localhost:8080 --refresh || true
+          done
+          oc --kubeconfig="{{ kubeconfig_path }}" exec -n {{ argocd_namespace }} "{{ pod_name }}" -- argocd app list --server localhost:8080 -o name | while read app; do
+            [ -z "$app" ] || oc --kubeconfig="{{ kubeconfig_path }}" exec -n {{ argocd_namespace }} "{{ pod_name }}" -- argocd app get "$app" --server localhost:8080 --hard-refresh || true
+          done
+        fi
+      loop: "{{ server_pod_result.results | default([]) }}"
+      when: wedged_clusters | default([]) | length > 0 and (item.resources | default([]) | length > 0)
+      loop_control:
+        label: "{{ item.item }}"
+      vars:
+        kubeconfig_path: "/tmp/{{ item.item }}-kubeconfig.yaml"
+        pod_name: "{{ item.resources[0].metadata.name if (item.resources | default([]) | length > 0) else '' }}"
+      ignore_errors: true
+
+    - name: Success
+      debug:
+        msg: "ArgoCD health monitoring completed."
+  environment:
+    KUBECONFIG: "{{ kubeconfig | default(omit) }}"

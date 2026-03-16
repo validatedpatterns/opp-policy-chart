@@ -1,0 +1,18 @@
+# Get managed clusters from hub (exclude local-cluster). Set expected_clusters and clusters_ready.
+- name: Get list of managed clusters (hub)
+  kubernetes.core.k8s_info:
+    kind: ManagedCluster
+  register: managed_clusters_result
+
+- name: Set expected clusters (exclude local-cluster)
+  set_fact:
+    expected_clusters: "{{ (managed_clusters_result.resources | default([]) | map(attribute='metadata.name') | reject('equalto', 'local-cluster') | list) }}"
+
+- name: Set clusters_ready when we have enough clusters
+  set_fact:
+    clusters_ready: "{{ expected_clusters | length >= (expected_cluster_count | default(2)) }}"
+
+- name: Pause when waiting for managed clusters
+  pause:
+    seconds: "{{ sleep_interval | default(30) }}"
+  when: not clusters_ready

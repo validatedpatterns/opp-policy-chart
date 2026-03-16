@@ -1,0 +1,14 @@
+# Delete pods in a list. Vars: cluster, pods (list of pod objects), work_dir, namespace.
+- name: Delete pod {{ pod.metadata.name }}
+  kubernetes.core.k8s:
+    state: absent
+    kind: Pod
+    namespace: "{{ namespace }}"
+    name: "{{ pod.metadata.name }}"
+    kubeconfig: "{{ work_dir }}/{{ cluster }}-kubeconfig.yaml"
+  loop: "{{ pods }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  vars:
+    pod: "{{ item }}"
+  ignore_errors: true

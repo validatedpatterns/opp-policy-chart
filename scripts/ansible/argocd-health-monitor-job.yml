@@ -1,0 +1,66 @@
+---
+# ArgoCD health monitor - Job (one-shot, long-running).
+# Retries until both primary and secondary Argo CD instances are healthy, then exits.
+# Requires: kubernetes.core. Run: ansible-playbook -i localhost, -c local argocd-health-monitor-job.yml
+# Env: KUBECONFIG (hub), PRIMARY_CLUSTER, SECONDARY_CLUSTER, FORCE_SYNC_*.
+- name: ArgoCD health monitoring (Job)
+  hosts: localhost
+  gather_facts: true
+  vars:
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    force_sync_app_namespace: "{{ lookup('env', 'FORCE_SYNC_APP_NAMESPACE') | default('openshift-gitops', true) }}"
+    force_sync_app_name: "{{ lookup('env', 'FORCE_SYNC_APP_NAME') | default('ramendr-starter-kit-resilient', true) }}"
+    force_sync_resource_kind: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_KIND') | default('Namespace', true) }}"
+    force_sync_resource_name: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_NAME') | default('ramendr-starter-kit-resilient', true) }}"
+    argocd_namespace: "openshift-gitops"
+    max_attempts: 180
+    sleep_interval: 30
+    expected_cluster_count: 2
+    cluster_argocd_namespace: "ramendr-starter-kit-resilient"
+    cluster_argocd_instance: "resilient-gitops-server"
+  tasks:
+    - name: Set hub kubeconfig
+      set_fact:
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) }}"
+
+    - name: Wait for managed clusters to appear
+      include_tasks: tasks/get_managed_clusters.yml
+      loop: "{{ range(1, 301) | list }}"
+      loop_control:
+        extended: yes
+        index_var: wait_idx
+        label: "{{ 'Wait ' + (wait_idx | string) }}"
+      vars:
+        sleep_interval: "{{ sleep_interval }}"
+        expected_cluster_count: "{{ expected_cluster_count }}"
+      when: not (clusters_ready | default(false))
+      register: wait_result
+
+    - name: Fail when no managed clusters after waiting
+      fail:
+        msg: "No managed clusters found after waiting."
+      when: not (clusters_ready | default(false))
+
+    - name: Run health check attempts until all healthy or max attempts
+      include_tasks: tasks/argocd-health-check-one-attempt.yml
+      loop: "{{ range(1, max_attempts + 1) | list }}"
+      loop_control:
+        extended: yes
+        index_var: attempt_idx
+        label: "{{ 'Attempt ' + (attempt_idx | string) + ' of ' + (max_attempts | string) }}"
+      vars:
+        attempt: "{{ attempt_idx }}"
+      when: not (all_healthy | default(false))
+      register: attempt_result
+
+    - name: Fail when not all clusters healthy after max attempts
+      fail:
+        msg: "ArgoCD health monitoring did not complete within {{ max_attempts }} attempts."
+      when: not (all_healthy | default(false))
+
+    - name: Success
+      debug:
+        msg: "All clusters are healthy - health monitoring completed successfully."
+  environment:
+    KUBECONFIG: "{{ kubeconfig | default(omit) }}"

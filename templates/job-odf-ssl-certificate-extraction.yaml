@@ -16,6 +16,7 @@ spec:
       containers:
       - name: odf-ssl-extractor
         image: quay.io/validatedpatterns/utility-container:latest
+        workingDir: /playbooks
         resources:
           requests:
             memory: "512Mi"
@@ -23,18 +24,36 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "500m"
-        command:
-        - /bin/bash
-        - -c
-        - |
-{{ .Files.Get "scripts/odf-ssl-certificate-extraction.sh" | indent 10 }}
         env:
-        - name: KUBECONFIG
-          value: ""
         - name: PRIMARY_CLUSTER
           value: {{ include "opp.primaryClusterName" . | quote }}
         - name: SECONDARY_CLUSTER
           value: {{ include "opp.secondaryClusterName" . | quote }}
+        command:
+        - ansible-playbook
+        args:
+        - -i
+        - localhost,
+        - -c
+        - local
+        - /playbooks/odf-ssl-certificate-extraction.yml
+        volumeMounts:
+        - name: playbooks
+          mountPath: /playbooks
+          readOnly: true
+      volumes:
+      - name: playbooks
+        configMap:
+          name: odf-ssl-extractor-playbooks
+          items:
+          - key: odf-ssl-certificate-extraction.yml
+            path: odf-ssl-certificate-extraction.yml
+          - key: tasks_kubeconfig.yml
+            path: tasks/kubeconfig.yml
+          - key: tasks_odf_ssl_extract_ca.yml
+            path: tasks/odf-ssl-extract-ca.yml
+          - key: tasks_odf_ssl_delete_pods.yml
+            path: tasks/odf-ssl-delete-pods.yml
       restartPolicy: Never
       serviceAccountName: odf-ssl-extractor-sa
   backoffLimit: 10
