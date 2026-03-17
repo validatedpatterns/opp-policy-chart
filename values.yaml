@@ -9,21 +9,16 @@ regionalDR:
       secondary:
         name: ocp-secondary
 
+# Managed clustergroup namespace for ArgoCD wedged check: "<pattern>-<clustergroup>" (e.g. ramendr-techdemo-resilient).
+#   1. argocdHealthMonitor.managedClusterGroupNamespace (explicit override), or
+#   2. global.pattern / patternName + "-" + clustergroup name (from clusterGroup.managedClusterGroups / regionalDR).
+
 argocdHealthMonitor:
   enabled: true
-  # When remediating a wedged cluster, force-sync these resources in the Application (instead of restarting Argo CD)
+  # Explicit override for managed clustergroup namespace (optional). When set, used as-is.
+  # managedClusterGroupNamespace: ""
   forceSyncAppNamespace: openshift-gitops
-  forceSyncAppName: ramendr-starter-kit-resilient
-  # List of resources to force-sync (kind + name). First should be the imperative Namespace (exists in any validated pattern).
-  # Additional namespaces can be taken from values-<clusterGroup>.yaml (clusterGroup.namespaces) at deploy time.
-  forceSyncResources:
-    - kind: Namespace
-      name: ramendr-starter-kit-resilient
-    # Example: add more Namespace resources from values-<clusterGroup>.yaml clusterGroup.namespaces
-    # - kind: Namespace
-    #   name: gitops-vms
-    # - kind: Namespace
-    #   name: openshift-cnv
-  # Legacy single-resource defaults (used only if forceSyncResources is empty)
+  # GitOps Application name is "<pattern name>-<clustergroup name>" (e.g. ramendr-techdemo-resilient).
+  # Pattern name is read from global.pattern (passed to the chart); override with patternName or forceSyncAppName if needed.
+  # forceSyncResourceKind / FORCE_SYNC_RESOURCE_NAME target the managed clustergroup namespace (<pattern>-<clustergroup>).
   forceSyncResourceKind: Namespace
-  forceSyncResourceName: ramendr-starter-kit-resilient

@@ -15,12 +15,13 @@ SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 MAX_ATTEMPTS=270  # Check 270 times (90 minutes with 20s intervals) before failing
 SLEEP_INTERVAL=20
 ARGOCD_NAMESPACE="openshift-gitops"
-# Namespace where the Application to force-sync lives (parameterized; default openshift-gitops)
+# Managed clustergroup namespace and short name: set by Helm from clusterGroup.managedClusterGroups / regionalDR (no hard-coded default).
+MANAGED_CLUSTER_GROUP_NAMESPACE="${MANAGED_CLUSTER_GROUP_NAMESPACE:?MANAGED_CLUSTER_GROUP_NAMESPACE must be set by the chart or environment}"
+MANAGED_CLUSTER_GROUP_NAME="${MANAGED_CLUSTER_GROUP_NAME:-${MANAGED_CLUSTER_GROUP_NAMESPACE#ramendr-starter-kit-}}"
 FORCE_SYNC_APP_NAMESPACE="${FORCE_SYNC_APP_NAMESPACE:-openshift-gitops}"
-# FORCE_SYNC_RESOURCES: JSON array of {kind, name} (imperative Namespace + namespaces from values-<clusterGroup>.yaml)
-FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-$MANAGED_CLUSTER_GROUP_NAMESPACE}"
 FORCE_SYNC_RESOURCE_KIND="${FORCE_SYNC_RESOURCE_KIND:-Namespace}"
-FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-$MANAGED_CLUSTER_GROUP_NAMESPACE}"
 HEALTH_CHECK_TIMEOUT=30
 
 # Function to check if a cluster is wedged
@@ -36,17 +37,14 @@ check_cluster_wedged() {
     return 0
   fi
   
-  # Determine the cluster-specific ArgoCD instance name and namespace
+  # Determine the cluster-specific ArgoCD instance name and namespace (managed clustergroup only)
   local cluster_argocd_namespace=""
   local cluster_argocd_instance=""
   case "$cluster" in
-    "$PRIMARY_CLUSTER")
-      cluster_argocd_namespace="ramendr-starter-kit-resilient"
-      cluster_argocd_instance="resilient-gitops-server"
-      ;;
-    "$SECONDARY_CLUSTER")
-      cluster_argocd_namespace="ramendr-starter-kit-resilient"
-      cluster_argocd_instance="resilient-gitops-server"
+    "$PRIMARY_CLUSTER"|"$SECONDARY_CLUSTER")
+      cluster_argocd_namespace="$MANAGED_CLUSTER_GROUP_NAMESPACE"
+      # Instance name = <clusterGroupName>-gitops-server; use MANAGED_CLUSTER_GROUP_NAME from chart
+      cluster_argocd_instance="${MANAGED_CLUSTER_GROUP_NAME}-gitops-server"
       ;;
     "local-cluster")
       cluster_argocd_namespace="openshift-gitops"
@@ -232,10 +230,15 @@ attempt=1
 while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   echo "=== ArgoCD Health Check Attempt $attempt/$MAX_ATTEMPTS ==="
   
-  # Get list of managed clusters
-  MANAGED_CLUSTERS=$(oc get managedclusters -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+  # Get list of managed clusters, exclude local-cluster, sort for deterministic sequence
+  ALL_NAMES=$(oc get managedclusters -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo "")
+  MANAGED_CLUSTERS_ARR=()
+  for c in $ALL_NAMES; do
+    [[ "$c" != "local-cluster" ]] && MANAGED_CLUSTERS_ARR+=("$c")
+  done
+  mapfile -t MANAGED_CLUSTERS_ARR < <(printf '%s\n' "${MANAGED_CLUSTERS_ARR[@]}" | sort)
   
-  if [[ -z "$MANAGED_CLUSTERS" ]]; then
+  if [[ ${#MANAGED_CLUSTERS_ARR[@]} -eq 0 ]]; then
     echo "❌ CRITICAL ERROR: No managed clusters found"
     echo ""
     echo "The ArgoCD health monitor requires managed clusters to function properly."
@@ -254,18 +257,14 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
     exit 1
   fi
   
-  echo "Found managed clusters: $MANAGED_CLUSTERS"
+  echo "Found ${#MANAGED_CLUSTERS_ARR[@]} managed cluster(s) - will try each in sequence: ${MANAGED_CLUSTERS_ARR[*]}"
   
   wedged_clusters=()
   
   # First, check if all managed clusters are available and ready
   echo "🔍 Checking if all managed clusters are available and ready..."
   unavailable_clusters=()
-  for cluster in $MANAGED_CLUSTERS; do
-    if [[ "$cluster" == "local-cluster" ]]; then
-      continue
-    fi
-    
+  for cluster in "${MANAGED_CLUSTERS_ARR[@]}"; do
     echo "Checking availability of cluster: $cluster"
     
     # Check if cluster is available
@@ -309,14 +308,12 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   
   echo "✅ All managed clusters are available and ready - proceeding with health checks"
   
-  # Now check each managed cluster for ArgoCD health
+  # Now check each managed cluster in sequence for ArgoCD health
   kubeconfig_failures=()
-  for cluster in $MANAGED_CLUSTERS; do
-    if [[ "$cluster" == "local-cluster" ]]; then
-      continue
-    fi
-    
-    echo "Checking ArgoCD health on cluster: $cluster"
+  cluster_idx=0
+  for cluster in "${MANAGED_CLUSTERS_ARR[@]}"; do
+    ((cluster_idx++)) || true
+    echo "Checking cluster $cluster_idx/${#MANAGED_CLUSTERS_ARR[@]}: $cluster"
     
     # Download kubeconfig
     if download_kubeconfig "$cluster"; then

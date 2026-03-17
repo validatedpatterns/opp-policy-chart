@@ -15,12 +15,8 @@ v0.1.0 - Initial release
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | argocdHealthMonitor.enabled | bool | `true` |  |
-| argocdHealthMonitor.forceSyncAppName | string | `"ramendr-starter-kit-resilient"` |  |
 | argocdHealthMonitor.forceSyncAppNamespace | string | `"openshift-gitops"` |  |
 | argocdHealthMonitor.forceSyncResourceKind | string | `"Namespace"` |  |
-| argocdHealthMonitor.forceSyncResourceName | string | `"ramendr-starter-kit-resilient"` |  |
-| argocdHealthMonitor.forceSyncResources[0].kind | string | `"Namespace"` |  |
-| argocdHealthMonitor.forceSyncResources[0].name | string | `"ramendr-starter-kit-resilient"` |  |
 | regionalDR[0].clusters.primary.name | string | `"ocp-primary"` |  |
 | regionalDR[0].clusters.secondary.name | string | `"ocp-secondary"` |  |
 | regionalDR[0].name | string | `"resilient"` |  |
