@@ -16,14 +16,14 @@ SECONDARY_CLUSTER="${SECONDARY_CLUSTER:-ocp-secondary}"
 MAX_ATTEMPTS=180  # Check 180 times (90 minutes with 30s intervals) before failing
 SLEEP_INTERVAL=30
 ARGOCD_NAMESPACE="openshift-gitops"
-# Same as cron: force-sync one or more resources in this Application when remediating (parameterized)
-# FORCE_SYNC_RESOURCES: JSON array of {kind, name} (e.g. [{"kind":"Namespace","name":"ramendr-starter-kit-resilient"},...])
-#   Includes the imperative Namespace plus optional namespaces from values-<clusterGroup>.yaml clusterGroup.namespaces
-# Legacy single-resource vars used when FORCE_SYNC_RESOURCES is empty
+MIN_MANAGED_CLUSTERS=1  # Proceed when at least this many managed clusters (excluding local-cluster)
+# Managed clustergroup namespace: from values-global/values-hub (MANAGED_CLUSTER_GROUP_NAMESPACE). Only look for and force-sync this namespace.
+MANAGED_CLUSTER_GROUP_NAMESPACE="${MANAGED_CLUSTER_GROUP_NAMESPACE:-ramendr-starter-kit-resilient}"
+# Force-sync: single Namespace of the managed clustergroup (FORCE_SYNC_RESOURCES set by Helm from same namespace)
 FORCE_SYNC_APP_NAMESPACE="${FORCE_SYNC_APP_NAMESPACE:-openshift-gitops}"
-FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_APP_NAME="${FORCE_SYNC_APP_NAME:-$MANAGED_CLUSTER_GROUP_NAMESPACE}"
 FORCE_SYNC_RESOURCE_KIND="${FORCE_SYNC_RESOURCE_KIND:-Namespace}"
-FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-ramendr-starter-kit-resilient}"
+FORCE_SYNC_RESOURCE_NAME="${FORCE_SYNC_RESOURCE_NAME:-$MANAGED_CLUSTER_GROUP_NAMESPACE}"
 HEALTH_CHECK_TIMEOUT=60
 
 # Function to check if a cluster is wedged
@@ -39,17 +39,15 @@ check_cluster_wedged() {
     return 0
   fi
   
-  # Determine the cluster-specific ArgoCD instance name and namespace
+  # Determine the cluster-specific ArgoCD instance name and namespace (managed clustergroup only)
   local cluster_argocd_namespace=""
   local cluster_argocd_instance=""
   case "$cluster" in
-    "$PRIMARY_CLUSTER")
-      cluster_argocd_namespace="ramendr-starter-kit-resilient"
-      cluster_argocd_instance="resilient-gitops-server"
-      ;;
-    "$SECONDARY_CLUSTER")
-      cluster_argocd_namespace="ramendr-starter-kit-resilient"
-      cluster_argocd_instance="resilient-gitops-server"
+    "$PRIMARY_CLUSTER"|"$SECONDARY_CLUSTER")
+      cluster_argocd_namespace="$MANAGED_CLUSTER_GROUP_NAMESPACE"
+      # Instance name = <clusterGroupName>-gitops-server (e.g. resilient-gitops-server)
+      local cg_name="${MANAGED_CLUSTER_GROUP_NAMESPACE#ramendr-starter-kit-}"
+      cluster_argocd_instance="${cg_name}-gitops-server"
       ;;
     "local-cluster")
       cluster_argocd_namespace="openshift-gitops"
@@ -293,8 +291,6 @@ download_kubeconfig() {
 
 # Main monitoring loop
 attempt=1
-EXPECTED_CLUSTER_COUNT=2  # Expect 2 managed clusters (besides local-cluster)
-
 while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   echo "=== ArgoCD Health Check Attempt $attempt/$MAX_ATTEMPTS ==="
   
@@ -303,7 +299,7 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   
   if [[ -z "$ALL_MANAGED_CLUSTERS" ]]; then
     echo "⏳ No managed clusters found yet - waiting for managed clusters to be created..."
-    echo "   Expected: $EXPECTED_CLUSTER_COUNT managed clusters (excluding local-cluster)"
+    echo "   Need at least $MIN_MANAGED_CLUSTERS managed cluster(s) (excluding local-cluster)"
     echo "   Managed clusters will be created during the deployment process."
     echo "   Waiting $SLEEP_INTERVAL seconds before retry..."
     sleep $SLEEP_INTERVAL
@@ -311,7 +307,7 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
     continue
   fi
   
-  # Convert to array and filter out local-cluster
+  # Convert to array, filter out local-cluster, and sort for deterministic sequence
   IFS=' ' read -r -a ALL_CLUSTERS <<< "$ALL_MANAGED_CLUSTERS"
   EXPECTED_CLUSTERS=()
   for cluster in "${ALL_CLUSTERS[@]}"; do
@@ -319,31 +315,27 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
       EXPECTED_CLUSTERS+=("$cluster")
     fi
   done
+  # Sort so we try each managed cluster in a deterministic order
+  mapfile -t EXPECTED_CLUSTERS < <(printf '%s\n' "${EXPECTED_CLUSTERS[@]}" | sort)
   
   FOUND_COUNT=${#EXPECTED_CLUSTERS[@]}
-  echo "Found managed clusters (excluding local-cluster): ${EXPECTED_CLUSTERS[*]}"
-  echo "Found count: $FOUND_COUNT (expected: $EXPECTED_CLUSTER_COUNT)"
+  echo "Found managed clusters (excluding local-cluster, will try in sequence): ${EXPECTED_CLUSTERS[*]}"
+  echo "Found count: $FOUND_COUNT (minimum required: $MIN_MANAGED_CLUSTERS)"
   
-  # Check if we have the expected number of clusters
-  if [[ $FOUND_COUNT -lt $EXPECTED_CLUSTER_COUNT ]]; then
+  if [[ $FOUND_COUNT -lt $MIN_MANAGED_CLUSTERS ]]; then
     echo "⏳ Waiting for managed clusters to be created..."
     echo "   Found: $FOUND_COUNT managed cluster(s) (excluding local-cluster)"
-    echo "   Expected: $EXPECTED_CLUSTER_COUNT managed clusters (excluding local-cluster)"
+    echo "   Need at least: $MIN_MANAGED_CLUSTERS"
     if [[ $FOUND_COUNT -gt 0 ]]; then
       echo "   Current clusters: ${EXPECTED_CLUSTERS[*]}"
     fi
-    echo "   Managed clusters will be created during the deployment process."
     echo "   Waiting $SLEEP_INTERVAL seconds before retry..."
     sleep $SLEEP_INTERVAL
     ((attempt++))
     continue
-  elif [[ $FOUND_COUNT -gt $EXPECTED_CLUSTER_COUNT ]]; then
-    echo "⚠️  Warning: Found $FOUND_COUNT managed clusters, expected $EXPECTED_CLUSTER_COUNT"
-    echo "   Clusters found: ${EXPECTED_CLUSTERS[*]}"
-    echo "   Proceeding with health checks on all found clusters..."
   fi
   
-  echo "✅ Found $FOUND_COUNT managed cluster(s) (excluding local-cluster): ${EXPECTED_CLUSTERS[*]}"
+  echo "✅ Found $FOUND_COUNT managed cluster(s) - will check each in sequence: ${EXPECTED_CLUSTERS[*]}"
   
   wedged_clusters=()
   
@@ -401,10 +393,12 @@ while [[ $attempt -le $MAX_ATTEMPTS ]]; do
   
   echo "✅ All expected managed clusters are available and ready - proceeding with health checks"
   
-  # Now check each expected managed cluster for ArgoCD health
+  # Now check each managed cluster in sequence for ArgoCD health
   kubeconfig_failures=()
+  cluster_idx=0
   for cluster in "${EXPECTED_CLUSTERS[@]}"; do
-    echo "Checking ArgoCD health on cluster: $cluster"
+    ((cluster_idx++)) || true
+    echo "Checking cluster $cluster_idx/$FOUND_COUNT: $cluster"
     
     # Download kubeconfig
     if download_kubeconfig "$cluster"; then

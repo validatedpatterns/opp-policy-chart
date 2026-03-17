@@ -23,16 +23,18 @@ spec:
           value: {{ include "opp.primaryClusterName" . | quote }}
         - name: SECONDARY_CLUSTER
           value: {{ include "opp.secondaryClusterName" . | quote }}
+        - name: MANAGED_CLUSTER_GROUP_NAMESPACE
+          value: {{ include "opp.managedClusterGroupNamespace" . | quote }}
         - name: FORCE_SYNC_APP_NAMESPACE
           value: {{ .Values.argocdHealthMonitor.forceSyncAppNamespace | default "openshift-gitops" | quote }}
         - name: FORCE_SYNC_APP_NAME
-          value: {{ .Values.argocdHealthMonitor.forceSyncAppName | default "ramendr-starter-kit-resilient" | quote }}
+          value: {{ include "opp.forceSyncAppName" . | quote }}
         - name: FORCE_SYNC_RESOURCES
           value: {{ include "opp.forceSyncResourcesJson" . | quote }}
         - name: FORCE_SYNC_RESOURCE_KIND
-          value: {{ .Values.argocdHealthMonitor.forceSyncResourceKind | default "Namespace" | quote }}
+          value: Namespace
         - name: FORCE_SYNC_RESOURCE_NAME
-          value: {{ .Values.argocdHealthMonitor.forceSyncResourceName | default "ramendr-starter-kit-resilient" | quote }}
+          value: {{ include "opp.forceSyncAppName" . | quote }}
         command:
         - /bin/bash
         - -c
