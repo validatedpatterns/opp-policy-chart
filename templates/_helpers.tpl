@@ -23,12 +23,12 @@
 {{- $explicit := .Values.argocdHealthMonitor.managedClusterGroupNamespace | default "" -}}
 {{- if $explicit }}{{ $explicit }}{{- else -}}
   {{- $cg := .Values.clusterGroup | default dict -}}
-  {{- $mcgListChart := $cg.managedClusterGroups | default list -}}
-  {{- $mcgListTop := .Values.managedClusterGroups | default list -}}
+  {{- $mcgRawChart := $cg.managedClusterGroups | default list -}}
+  {{- $mcgRawTop := .Values.managedClusterGroups | default list -}}
   {{- $mcgFromChart := dict -}}
-  {{- if gt (len $mcgListChart) 0 }}{{ $mcgFromChart = index $mcgListChart 0 }}{{ end -}}
+  {{- if gt (len $mcgRawChart) 0 }}{{ if eq (kindOf $mcgRawChart) "slice" }}{{ $mcgFromChart = first $mcgRawChart }}{{ else }}{{ $mcgFromChart = first (values $mcgRawChart) }}{{ end }}{{ end -}}
   {{- $mcgTop := dict -}}
-  {{- if gt (len $mcgListTop) 0 }}{{ $mcgTop = index $mcgListTop 0 }}{{ end -}}
+  {{- if gt (len $mcgRawTop) 0 }}{{ if eq (kindOf $mcgRawTop) "slice" }}{{ $mcgTop = first $mcgRawTop }}{{ else }}{{ $mcgTop = first (values $mcgRawTop) }}{{ end }}{{ end -}}
   {{- $firstDR := index (.Values.regionalDR | default list) 0 | default dict -}}
   {{- $cgName := .Values.managedClusterGroupName | default $mcgFromChart.name | default $mcgTop.name | default $firstDR.name -}}
   {{- if $cgName }}{{ printf "ramendr-starter-kit-%s" $cgName }}{{- else -}}{{ fail "managed clustergroup name required: set clusterGroup.managedClusterGroups[0].name (from values-hub), managedClusterGroups[0].name, managedClusterGroupName, regionalDR[0].name, or argocdHealthMonitor.managedClusterGroupNamespace" }}{{- end -}}
