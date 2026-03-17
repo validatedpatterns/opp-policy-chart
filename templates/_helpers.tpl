@@ -12,33 +12,22 @@
 {{- if $fromOver }}{{ $fromOver }}{{- else if and .Values.regionalDR (index .Values.regionalDR 0) }}{{ (index .Values.regionalDR 0).clusters.secondary.name | default "ocp-secondary" }}{{- else }}ocp-secondary{{ end -}}
 {{- end -}}
 
-{{/* Managed clustergroup namespace: from Validated Patterns managedClusterGroups (clusterGroup chart) or overrides.
+{{/* Managed clustergroup namespace: "<pattern>-<clustergroup>" (e.g. ramendr-techdemo-resilient), same convention as Application name.
      Precedence: 1) argocdHealthMonitor.managedClusterGroupNamespace (explicit)
-     2) clusterGroup.managedClusterGroups[0].name (framework block) → ramendr-starter-kit-<name>
-     3) managedClusterGroups[0].name (values-hub top-level) → ramendr-starter-kit-<name>
-     4) managedClusterGroupName (override) → ramendr-starter-kit-<name>
-     5) regionalDR[0].name (this chart) → ramendr-starter-kit-<name>
-     No hard-coded default; one of the above must be set. */}}
+     2) pattern name (global.pattern / patternName) + "-" + clustergroup name from clusterGroup.managedClusterGroups / regionalDR. */}}
 {{- define "opp.managedClusterGroupNamespace" -}}
 {{- $explicit := .Values.argocdHealthMonitor.managedClusterGroupNamespace | default "" -}}
 {{- if $explicit }}{{ $explicit }}{{- else -}}
-  {{- $cg := .Values.clusterGroup | default dict -}}
-  {{- $mcgRawChart := $cg.managedClusterGroups | default list -}}
-  {{- $mcgRawTop := .Values.managedClusterGroups | default list -}}
-  {{- $mcgFromChart := dict -}}
-  {{- if gt (len $mcgRawChart) 0 }}{{ if eq (kindOf $mcgRawChart) "slice" }}{{ $mcgFromChart = first $mcgRawChart }}{{ else }}{{ $mcgFromChart = first (values $mcgRawChart) }}{{ end }}{{ end -}}
-  {{- $mcgTop := dict -}}
-  {{- if gt (len $mcgRawTop) 0 }}{{ if eq (kindOf $mcgRawTop) "slice" }}{{ $mcgTop = first $mcgRawTop }}{{ else }}{{ $mcgTop = first (values $mcgRawTop) }}{{ end }}{{ end -}}
-  {{- $firstDR := index (.Values.regionalDR | default list) 0 | default dict -}}
-  {{- $cgName := .Values.managedClusterGroupName | default $mcgFromChart.name | default $mcgTop.name | default $firstDR.name -}}
-  {{- if $cgName }}{{ printf "ramendr-starter-kit-%s" $cgName }}{{- else -}}{{ fail "managed clustergroup name required: set clusterGroup.managedClusterGroups[0].name (from values-hub), managedClusterGroups[0].name, managedClusterGroupName, regionalDR[0].name, or argocdHealthMonitor.managedClusterGroupNamespace" }}{{- end -}}
+  {{- $patternName := .Values.argocdHealthMonitor.patternName | default (index (.Values.global | default dict) "pattern") | default "ramendr-starter-kit" -}}
+  {{- $cgName := include "opp.managedClusterGroupName" . -}}
+  {{- if $cgName }}{{ printf "%s-%s" $patternName $cgName }}{{- else -}}{{ fail "managed clustergroup name required: set clusterGroup.managedClusterGroups[0].name (from values-hub), managedClusterGroups[0].name, managedClusterGroupName, regionalDR[0].name, or argocdHealthMonitor.managedClusterGroupNamespace" }}{{- end -}}
 {{- end -}}
 {{- end -}}
 
-{{/* Short managed clustergroup name (no ramendr-starter-kit- prefix). Same precedence as opp.managedClusterGroupNamespace. */}}
+{{/* Short managed clustergroup name. Same precedence as namespace; when namespace is explicit, derived as last segment after "-". */}}
 {{- define "opp.managedClusterGroupName" -}}
 {{- $explicitNs := .Values.argocdHealthMonitor.managedClusterGroupNamespace | default "" -}}
-{{- if $explicitNs }}{{ trimPrefix "ramendr-starter-kit-" $explicitNs | default $explicitNs }}{{- else -}}
+{{- if $explicitNs }}{{ .Values.managedClusterGroupName | default (index (splitList "-" $explicitNs) (sub (len (splitList "-" $explicitNs)) 1)) }}{{- else -}}
   {{- $cg := .Values.clusterGroup | default dict -}}
   {{- $mcgRawChart := $cg.managedClusterGroups | default list -}}
   {{- $mcgRawTop := .Values.managedClusterGroups | default list -}}

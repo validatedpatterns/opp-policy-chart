@@ -9,13 +9,9 @@ regionalDR:
       secondary:
         name: ocp-secondary
 
-# Managed clustergroup namespace for ArgoCD wedged check is derived from (in order):
-#   1. argocdHealthMonitor.managedClusterGroupNamespace (explicit override)
-#   2. clusterGroup.managedClusterGroups[0].name from the Validated Patterns clusterGroup chart (values-hub)
-#   3. managedClusterGroups[0].name (top-level, e.g. from values-hub)
-#   4. managedClusterGroupName (override)
-#   5. regionalDR[0].name (this chart, e.g. "resilient") → ramendr-starter-kit-<name>
-# When used with the framework, values-hub defines managedClusterGroups; this chart uses that block and does not hard-code the name.
+# Managed clustergroup namespace for ArgoCD wedged check: "<pattern>-<clustergroup>" (e.g. ramendr-techdemo-resilient).
+#   1. argocdHealthMonitor.managedClusterGroupNamespace (explicit override), or
+#   2. global.pattern / patternName + "-" + clustergroup name (from clusterGroup.managedClusterGroups / regionalDR).
 
 argocdHealthMonitor:
   enabled: true
@@ -24,5 +20,5 @@ argocdHealthMonitor:
   forceSyncAppNamespace: openshift-gitops
   # GitOps Application name is "<pattern name>-<clustergroup name>" (e.g. ramendr-techdemo-resilient).
   # Pattern name is read from global.pattern (passed to the chart); override with patternName or forceSyncAppName if needed.
-  # forceSyncResourceKind / FORCE_SYNC_RESOURCE_NAME target the managed clustergroup namespace (ramendr-starter-kit-<name>).
+  # forceSyncResourceKind / FORCE_SYNC_RESOURCE_NAME target the managed clustergroup namespace (<pattern>-<clustergroup>).
   forceSyncResourceKind: Namespace
