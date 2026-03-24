@@ -31,3 +31,19 @@
     dest: "{{ output_path }}"
     mode: "0644"
   when: ca_content is defined and ca_content != ''
+
+- name: Stat extracted CA output
+  ansible.builtin.stat:
+    path: "{{ output_path }}"
+  register: odf_ssl_ca_out_stat
+
+- name: Fail when CA file missing or too small after extract
+  ansible.builtin.fail:
+    msg: >-
+      Extraction produced no usable PEM at {{ output_path }} (cluster={{ cluster_name | default('unknown') }}).
+      Source: ConfigMap trusted-ca-bundle, namespace openshift-config-managed
+      (hub: in-cluster API; spoke: kubeconfig={{ kubeconfig_path | default('(hub)') }}).
+      k8s_info resource count={{ ca_cm.resources | default([]) | length }}.
+  when: >-
+    not odf_ssl_ca_out_stat.stat.exists | default(false)
+    or (odf_ssl_ca_out_stat.stat.size | default(0) | int) < 64

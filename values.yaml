@@ -1,6 +1,8 @@
 ---
 # DR pair cluster names - same structure as rdr chart (regionalDR).
 # Override via values-hub or overrides so opp-policy and rdr use the same names.
+# These MUST match ACM ManagedCluster metadata.name (e.g. mjrtd420-1); otherwise kubeconfig/CA paths and
+# cluster-proxy-ca-bundle distribution target the wrong cluster names and spokes stay without a bundle.
 regionalDR:
   - name: resilient
     clusters:
