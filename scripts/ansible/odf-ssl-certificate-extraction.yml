@@ -249,7 +249,7 @@
         namespace: openshift-operators
       register: ramen_config_cm
 
-    - name: Update ramen-hub-operator-config with caCertificates in s3StoreProfiles
+    - name: Set ramen_manager_config.yaml from existing ConfigMap (if present)
       ansible.builtin.set_fact:
         ramen_config_yaml: >-
           {{
@@ -258,7 +258,32 @@
           }}
       when: ramen_config_cm.resources | length > 0
 
-    - name: Patch ramen config with caCertificates (create minimal if missing)
+    - name: Write existing ramen_manager_config for yq patch
+      ansible.builtin.copy:
+        content: "{{ ramen_config_yaml }}"
+        dest: "{{ work_dir }}/existing-ramen-config.yaml"
+        mode: "0644"
+      when: ramen_config_yaml is defined and (ramen_config_yaml | length) > 0
+
+    # When CM already exists, we must patch s3StoreProfiles in place (same as bash odf-ssl-certificate-extraction.sh).
+    # Previously only set_fact ran and no ramen_manager_config.yaml was written — Apply was skipped and the play "succeeded".
+    - name: Patch existing ramen_manager_config s3StoreProfiles with caCertificates (yq)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cp "{{ work_dir }}/existing-ramen-config.yaml" "{{ work_dir }}/ramen_manager_config.yaml"
+        yq eval -i '.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "{{ work_dir }}/ramen_manager_config.yaml"
+        yq eval -i '.kubeObjectProtection.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "{{ work_dir }}/ramen_manager_config.yaml"
+        test -s "{{ work_dir }}/ramen_manager_config.yaml"
+        grep -q 'caCertificates' "{{ work_dir }}/ramen_manager_config.yaml"
+      environment:
+        CA_BUNDLE_BASE64: "{{ ca_bundle_b64 }}"
+      args:
+        executable: /bin/bash
+      when: ramen_config_yaml is defined and (ramen_config_yaml | length) > 0
+      register: ramen_yq_patch
+      changed_when: true
+
+    - name: Create minimal ramen_manager_config when ConfigMap missing or empty
       ansible.builtin.copy:
         content: |
           kubeObjectProtection:
@@ -274,7 +299,22 @@
             caCertificates: "{{ ca_bundle_b64 }}"
         dest: "{{ work_dir }}/ramen_manager_config.yaml"
         mode: "0644"
-      when: ramen_config_yaml is not defined or ramen_config_yaml == ''
+      when: ramen_config_yaml is not defined or (ramen_config_yaml | length) == 0
+
+    - name: Stat ramen_manager_config.yaml before apply
+      ansible.builtin.stat:
+        path: "{{ work_dir }}/ramen_manager_config.yaml"
+      register: ramen_mgr_stat
+
+    - name: Fail if ramen_manager_config.yaml was not produced
+      ansible.builtin.assert:
+        that:
+          - ramen_mgr_stat.stat.exists | default(false)
+          - (ramen_mgr_stat.stat.size | default(0) | int) > 32
+        fail_msg: >-
+          Internal error: ramen_manager_config.yaml missing or empty after patch/create.
+          If an existing ConfigMap had no s3StoreProfiles for yq to patch, pre-create profiles in ramen-hub-operator-config
+          or use the bash job which validates profile count.
 
     - name: Apply ramen-hub-operator-config ConfigMap
       kubernetes.core.k8s:
@@ -287,8 +327,25 @@
             namespace: openshift-operators
           data:
             ramen_manager_config.yaml: "{{ lookup('file', work_dir + '/ramen_manager_config.yaml') }}"
-      when: (work_dir + '/ramen_manager_config.yaml') is file
-      failed_when: false
+
+    - name: Re-read ramen-hub-operator-config after apply
+      kubernetes.core.k8s_info:
+        kind: ConfigMap
+        name: ramen-hub-operator-config
+        namespace: openshift-operators
+      register: ramen_config_verify
+
+    - name: Assert live ConfigMap contains caCertificates in ramen_manager_config.yaml
+      ansible.builtin.assert:
+        that:
+          - ramen_config_verify.resources | length > 0
+          - >-
+            ('caCertificates' in ((ramen_config_verify.resources[0].data | default({})).get('ramen_manager_config.yaml', '') | default('')))
+            and (('s3StoreProfiles' in ((ramen_config_verify.resources[0].data | default({})).get('ramen_manager_config.yaml', '') | default('')))
+            or ('kubeObjectProtection' in ((ramen_config_verify.resources[0].data | default({})).get('ramen_manager_config.yaml', '') | default(''))))
+        fail_msg: >-
+          ramen-hub-operator-config apply succeeded but cluster ConfigMap ramen_manager_config.yaml does not contain
+          expected caCertificates / s3StoreProfiles (or kubeObjectProtection) content. Ramen may not have accepted the update.
 
     - name: Get Velero pods per cluster
       kubernetes.core.k8s_info:
