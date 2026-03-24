@@ -12,8 +12,6 @@
     secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
     required_clusters: ["hub", "{{ primary_cluster }}", "{{ secondary_cluster }}"]
     kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
-    # Minimum s3 profiles that must have non-empty caCertificates after apply (Ramen/ODF often uses 2+).
-    ramen_ca_min_profiles: 2
   tasks:
     - name: Create work directory
       ansible.builtin.file:
@@ -240,162 +238,13 @@
         pods_to_delete: "{{ ramen_pod_query.resources | default([]) }}"
         pod_namespace: openshift-dr-system
 
-    # Ramen ConfigMap update + verification: tagged "always" so ansible-playbook --tags does not skip them.
-    # ramen_config_yaml is always a string (never undefined) so when: branches are reliable.
-    - name: Encode combined CA bundle to base64
-      ansible.builtin.set_fact:
-        ca_bundle_b64: "{{ lookup('file', work_dir + '/combined-ca-bundle.crt') | b64encode }}"
-      tags:
-        - always
-
-    - name: Get existing ramen-hub-operator-config
-      kubernetes.core.k8s_info:
-        kind: ConfigMap
-        name: ramen-hub-operator-config
-        namespace: openshift-operators
-      register: ramen_config_cm
-      tags:
-        - always
-
-    - name: Set ramen_config_yaml from cluster (always defined, empty if no ConfigMap or key)
-      ansible.builtin.set_fact:
-        ramen_config_yaml: >-
-          {{
-            ((ramen_config_cm.resources[0].data | default({}))['ramen_manager_config.yaml'] | default(''))
-            if (ramen_config_cm.resources | default([]) | length) > 0 else ''
-          }}
-      tags:
-        - always
-
-    - name: Write existing ramen_manager_config for yq patch
-      ansible.builtin.copy:
-        content: "{{ ramen_config_yaml }}"
-        dest: "{{ work_dir }}/existing-ramen-config.yaml"
-        mode: "0644"
-      when: (ramen_config_yaml | length) > 0
-      tags:
-        - always
-
-    # When CM already exists, patch s3StoreProfiles in place (same as bash odf-ssl-certificate-extraction.sh).
-    - name: Patch existing ramen_manager_config s3StoreProfiles with caCertificates (yq)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        cp "{{ work_dir }}/existing-ramen-config.yaml" "{{ work_dir }}/ramen_manager_config.yaml"
-        yq eval -i '.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "{{ work_dir }}/ramen_manager_config.yaml"
-        yq eval -i '.kubeObjectProtection.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "{{ work_dir }}/ramen_manager_config.yaml"
-        test -s "{{ work_dir }}/ramen_manager_config.yaml"
-        grep -q 'caCertificates' "{{ work_dir }}/ramen_manager_config.yaml"
+    # Ramen ConfigMap: same code path as odf-ssl-certificate-extraction.sh (avoids Ansible/k8s module + huge YAML issues).
+    - name: Update ramen-hub-operator-config (bash script parity)
+      ansible.builtin.command: bash /playbooks/odf-ssl-ramen-hub-configmap.sh
       environment:
-        CA_BUNDLE_BASE64: "{{ ca_bundle_b64 }}"
-      args:
-        executable: /bin/bash
-      when: (ramen_config_yaml | length) > 0
-      register: ramen_yq_patch
-      changed_when: true
-      tags:
-        - always
-
-    - name: Create minimal ramen_manager_config when ConfigMap missing or empty
-      ansible.builtin.copy:
-        content: |
-          kubeObjectProtection:
-            s3StoreProfiles:
-            - s3ProfileName: {{ primary_cluster }}
-              caCertificates: "{{ ca_bundle_b64 }}"
-            - s3ProfileName: {{ secondary_cluster }}
-              caCertificates: "{{ ca_bundle_b64 }}"
-          s3StoreProfiles:
-          - s3ProfileName: {{ primary_cluster }}
-            caCertificates: "{{ ca_bundle_b64 }}"
-          - s3ProfileName: {{ secondary_cluster }}
-            caCertificates: "{{ ca_bundle_b64 }}"
-        dest: "{{ work_dir }}/ramen_manager_config.yaml"
-        mode: "0644"
-      when: (ramen_config_yaml | length) == 0
-      tags:
-        - always
-
-    - name: Stat ramen_manager_config.yaml before apply
-      ansible.builtin.stat:
-        path: "{{ work_dir }}/ramen_manager_config.yaml"
-      register: ramen_mgr_stat
-      tags:
-        - always
-
-    - name: Fail if ramen_manager_config.yaml was not produced
-      ansible.builtin.assert:
-        that:
-          - ramen_mgr_stat.stat.exists | default(false)
-          - (ramen_mgr_stat.stat.size | default(0) | int) > 32
-        fail_msg: >-
-          Internal error: ramen_manager_config.yaml missing or empty after patch/create.
-          If an existing ConfigMap had no s3StoreProfiles for yq to patch, pre-create profiles in ramen-hub-operator-config
-          or use the bash job which validates profile count.
-      tags:
-        - always
-
-    # Do not use kubernetes.core.k8s with lookup('file') for ramen_manager_config.yaml: large base64 CA bundles can be
-    # mangled or not applied reliably; match bash script (literal block + oc apply).
-    - name: Apply ramen-hub-operator-config via oc (literal ConfigMap manifest from disk)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        W="{{ work_dir }}"
-        {
-          echo "apiVersion: v1"
-          echo "kind: ConfigMap"
-          echo "metadata:"
-          echo "  name: ramen-hub-operator-config"
-          echo "  namespace: openshift-operators"
-          echo "data:"
-          echo "  ramen_manager_config.yaml: |"
-          sed 's/^/    /' "$W/ramen_manager_config.yaml"
-        } > "$W/ramen-configmap-apply.yaml"
-        oc apply -f "$W/ramen-configmap-apply.yaml"
-      args:
-        executable: /bin/bash
-      changed_when: true
-      tags:
-        - always
-
-    # Strict: every non-empty s3StoreProfiles list must have caCertificates on each entry; at least ramen_ca_min_profiles with CA overall.
-    # Retries give Ramen hub operator time to reconcile without immediately stripping (if it does, job fails).
-    - name: Verify every s3StoreProfiles entry has non-empty caCertificates (yq + oc, with retries)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        W="{{ work_dir }}"
-        MIN="{{ ramen_ca_min_profiles | default(2) }}"
-        for attempt in $(seq 1 12); do
-          oc get configmap ramen-hub-operator-config -n openshift-operators \
-            -o jsonpath='{.data.ramen_manager_config\.yaml}' > "$W/.ramen-verify.yaml"
-          test -s "$W/.ramen-verify.yaml"
-          _n() { local v; v=$(yq "$1" "$W/.ramen-verify.yaml" 2>/dev/null | head -1 | tr -d ' \n\r'); [[ "$v" =~ ^[0-9]+$ ]] && echo "$v" || echo 0; }
-          kop_n=$(_n '(.kubeObjectProtection.s3StoreProfiles // []) | length')
-          top_n=$(_n '(.s3StoreProfiles // []) | length')
-          kop_ok=$(_n '[(.kubeObjectProtection.s3StoreProfiles // [])[] | select(.caCertificates != null and .caCertificates != "")] | length')
-          top_ok=$(_n '[(.s3StoreProfiles // [])[] | select(.caCertificates != null and .caCertificates != "")] | length')
-          bad=0
-          if [[ "$kop_n" -gt 0 ]] && [[ "$kop_ok" -lt "$kop_n" ]]; then bad=1; fi
-          if [[ "$top_n" -gt 0 ]] && [[ "$top_ok" -lt "$top_n" ]]; then bad=1; fi
-          maxp=$kop_n
-          [[ "$top_n" -gt "$maxp" ]] && maxp=$top_n
-          maxok=$kop_ok
-          [[ "$top_ok" -gt "$maxok" ]] && maxok=$top_ok
-          if [[ "$bad" -eq 0 ]] && [[ "$maxp" -ge "$MIN" ]] && [[ "$maxok" -ge "$MIN" ]]; then
-            exit 0
-          fi
-          if [[ $attempt -lt 12 ]]; then
-            echo "ramen CA verify attempt $attempt/12: kop_n=$kop_n kop_ok=$kop_ok top_n=$top_n top_ok=$top_ok (waiting 15s)..." >&2
-            sleep 15
-          fi
-        done
-        echo "FAILED: s3StoreProfiles missing caCertificates on some entries, or fewer than $MIN profiles with CA." >&2
-        echo "kop_n=$kop_n kop_ok=$kop_ok top_n=$top_n top_ok=$top_ok" >&2
-        head -n 60 "$W/.ramen-verify.yaml" >&2 || true
-        exit 1
-      args:
-        executable: /bin/bash
-      changed_when: false
-      check_mode: false
+        WORK_DIR: "{{ work_dir }}"
+        PRIMARY_CLUSTER: "{{ primary_cluster }}"
+        SECONDARY_CLUSTER: "{{ secondary_cluster }}"
       tags:
         - always
 

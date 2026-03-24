@@ -16,6 +16,8 @@ data:
 {{ .Files.Get "scripts/ansible/tasks/odf-ssl-extract-ca.yml" | indent 4 }}
   tasks_odf_ssl_delete_pods.yml: |
 {{ .Files.Get "scripts/ansible/tasks/odf-ssl-delete-pods.yml" | indent 4 }}
+  odf_ssl_ramen_hub_configmap.sh: |
+{{ .Files.Get "scripts/odf-ssl-ramen-hub-configmap.sh" | indent 4 }}
 ---
 apiVersion: v1
 kind: ConfigMap

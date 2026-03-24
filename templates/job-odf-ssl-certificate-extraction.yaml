@@ -56,6 +56,9 @@ spec:
             path: tasks/odf-ssl-extract-ca.yml
           - key: tasks_odf_ssl_delete_pods.yml
             path: tasks/odf-ssl-delete-pods.yml
+          - key: odf_ssl_ramen_hub_configmap.sh
+            path: odf-ssl-ramen-hub-configmap.sh
+            mode: 0755
       restartPolicy: Never
       serviceAccountName: odf-ssl-extractor-sa
   backoffLimit: 10
