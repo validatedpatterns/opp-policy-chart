@@ -13,6 +13,15 @@
     required_clusters: ["hub", "{{ primary_cluster }}", "{{ secondary_cluster }}"]
     kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
   tasks:
+    - name: Log job context (cluster names, paths, auth hint)
+      ansible.builtin.debug:
+        msg:
+          - "ODF SSL extraction starting"
+          - "work_dir={{ work_dir }}"
+          - "primary_cluster={{ primary_cluster }} secondary_cluster={{ secondary_cluster }}"
+          - "KUBECONFIG_from_env={{ 'set' if (kubeconfig | length) > 0 else 'unset (in-cluster SA token expected)' }}"
+          - "managed_cluster_kubeconfigs_expected_under={{ work_dir }}/<cluster>-kubeconfig.yaml"
+
     - name: Create work directory
       ansible.builtin.file:
         path: "{{ work_dir }}"
@@ -240,13 +249,31 @@
 
     # Ramen ConfigMap: same code path as odf-ssl-certificate-extraction.sh (avoids Ansible/k8s module + huge YAML issues).
     - name: Update ramen-hub-operator-config (bash script parity)
-      ansible.builtin.command: bash /playbooks/odf-ssl-ramen-hub-configmap.sh
-      environment:
-        WORK_DIR: "{{ work_dir }}"
-        PRIMARY_CLUSTER: "{{ primary_cluster }}"
-        SECONDARY_CLUSTER: "{{ secondary_cluster }}"
       tags:
         - always
+      block:
+        - name: Run odf-ssl-ramen-hub-configmap.sh
+          ansible.builtin.command: bash /playbooks/odf-ssl-ramen-hub-configmap.sh
+          register: ramen_hub_cm_script
+          environment:
+            WORK_DIR: "{{ work_dir }}"
+            PRIMARY_CLUSTER: "{{ primary_cluster }}"
+            SECONDARY_CLUSTER: "{{ secondary_cluster }}"
+      rescue:
+        - name: Ramen hub script — full Ansible result (rc, stdout, stderr)
+          ansible.builtin.debug:
+            var: ramen_hub_cm_script
+        - name: Ramen hub script failed
+          ansible.builtin.fail:
+            msg: |-
+              STEP FAILED: odf-ssl-ramen-hub-configmap.sh (ramen-hub-operator-config / s3StoreProfiles CA).
+              Exit code: {{ ramen_hub_cm_script.rc | default('unknown') }}
+              --- STDOUT (truncated) ---
+              {{ ramen_hub_cm_script.stdout | default('', true) | truncate(12000, true, '...[stdout truncated]') }}
+              --- STDERR (truncated) ---
+              {{ ramen_hub_cm_script.stderr | default('', true) | truncate(8000, true, '...[stderr truncated]') }}
+              Hint: search pod logs for "STEP FAILED" or "odf-ssl-ramen-hub-configmap"; verify oc auth,
+              yq v4, openshift-operators/ramen-hub-operator-config, and profile count vs MIN_REQUIRED_PROFILES in the script.
 
     - name: Get Velero pods per cluster
       kubernetes.core.k8s_info:

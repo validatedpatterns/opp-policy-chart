@@ -10,6 +10,8 @@ SECONDARY_CLUSTER="${SECONDARY_CLUSTER:?SECONDARY_CLUSTER is required}"
 
 die() { echo "❌ odf-ssl-ramen-hub-configmap.sh: $*" >&2; exit 1; }
 
+trap 'ec=$?; echo "❌ odf-ssl-ramen-hub-configmap.sh: command failed (exit $ec) at line $LINENO — see stderr above for the failing command." >&2' ERR
+
 mkdir -p "$WORK_DIR"
 [[ -f "$WORK_DIR/combined-ca-bundle.crt" ]] || die "missing $WORK_DIR/combined-ca-bundle.crt"
 
@@ -22,14 +24,20 @@ verify_post_apply() {
   local f="$WORK_DIR/.ramen-post-apply-verify.yaml" attempt
   local MIN_REQUIRED_PROFILES=2
   local PK PT CK CT bad maxp
+  local last_PK=0 last_PT=0 last_CK=0 last_CT=0 last_maxp=0 last_bad=1 oc_ok=0
   for attempt in $(seq 1 10); do
     if [[ "$attempt" -gt 1 ]]; then
       sleep 6
     else
       sleep 2
     fi
-    oc get configmap ramen-hub-operator-config -n openshift-operators \
-      -o jsonpath='{.data.ramen_manager_config\.yaml}' > "$f" 2>/dev/null || continue
+    if oc get configmap ramen-hub-operator-config -n openshift-operators \
+      -o jsonpath='{.data.ramen_manager_config\.yaml}' > "$f" 2>/dev/null; then
+      oc_ok=1
+    else
+      oc_ok=0
+      continue
+    fi
     [[ -s "$f" ]] || continue
     grep -q 'caCertificates' "$f" || continue
     grep -q 's3StoreProfiles' "$f" || continue
@@ -45,6 +53,12 @@ verify_post_apply() {
     [[ "$PK" -gt 0 && "$CK" -lt "$PK" ]] && bad=1
     [[ "$PT" -gt 0 && "$CT" -lt "$PT" ]] && bad=1
     maxp=$(( PK > PT ? PK : PT ))
+    last_PK=$PK
+    last_PT=$PT
+    last_CK=$CK
+    last_CT=$CT
+    last_maxp=$maxp
+    last_bad=$bad
     [[ "$bad" -eq 1 ]] && continue
     [[ "$maxp" -ge "$MIN_REQUIRED_PROFILES" ]] || continue
     [[ "$CK" -ge "$MIN_REQUIRED_PROFILES" || "$CT" -ge "$MIN_REQUIRED_PROFILES" ]] || continue
@@ -52,7 +66,9 @@ verify_post_apply() {
     return 0
   done
   echo "  ❌ Post-apply verification failed after 10 attempts." >&2
-  [[ -f "$f" ]] && head -n 50 "$f" >&2 || true
+  echo "  ❌ Diagnosis: oc_get_ok=$oc_ok last_kop_profiles=$last_PK last_kop_with_ca=$last_CK last_top_profiles=$last_PT last_top_with_ca=$last_CT last_max_profiles=$last_maxp last_section_bad=$last_bad (need each non-empty section fully CA-populated; max profiles >= $MIN_REQUIRED_PROFILES; at least $MIN_REQUIRED_PROFILES with CA in kop OR top)" >&2
+  echo "  ❌ If kop/top counts are 0, the hub operator may have removed ramen_manager_config data or the key is empty." >&2
+  [[ -f "$f" ]] && { echo "  ❌ First 80 lines of live ramen_manager_config from cluster:" >&2; head -n 80 "$f" >&2; } || echo "  ❌ No verify file (oc get may have failed every attempt)." >&2
   return 1
 }
 

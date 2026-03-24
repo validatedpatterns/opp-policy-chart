@@ -29,6 +29,11 @@ spec:
           value: {{ include "opp.primaryClusterName" . | quote }}
         - name: SECONDARY_CLUSTER
           value: {{ include "opp.secondaryClusterName" . | quote }}
+        # Readable task output in pod logs (default dense JSON is hard to grep).
+        - name: ANSIBLE_STDOUT_CALLBACK
+          value: yaml
+        - name: ANSIBLE_NOCOLOR
+          value: "true"
         command:
         - ansible-playbook
         args:
@@ -36,6 +41,7 @@ spec:
         - localhost,
         - -c
         - local
+        - -v
         - /playbooks/odf-ssl-certificate-extraction.yml
         volumeMounts:
         - name: playbooks
