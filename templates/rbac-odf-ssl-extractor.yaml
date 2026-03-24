@@ -9,6 +9,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 ---
+# Hub-only permissions for the Job SA. Pushes to managed clusters use each cluster's imported kubeconfig
+# (ACM admin-kubeconfig); those calls are authorized on the spoke, not by this ClusterRole.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

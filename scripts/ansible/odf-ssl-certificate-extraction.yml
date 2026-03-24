@@ -246,6 +246,102 @@
               name: cluster-proxy-ca-bundle
       failed_when: false
 
+    # Push to spokes here (not after ramen/Velero) so ramen failures never skip distribution.
+    # Use oc --from-file | apply like odf-ssl-certificate-extraction.sh — avoids kubernetes.core + huge inline data.
+    - name: Stat combined bundle before spoke push
+      ansible.builtin.command: stat -c '%s' "{{ work_dir }}/combined-ca-bundle.crt"
+      register: odf_ssl_bundle_bytes
+      changed_when: false
+
+    - name: Log spoke distribution prerequisites
+      ansible.builtin.debug:
+        msg:
+          - "Pushing cluster-proxy-ca-bundle to each managed cluster (oc); combined-ca-bundle.crt bytes={{ odf_ssl_bundle_bytes.stdout | default('n/a') }}"
+          - "managed_clusters={{ managed_clusters }} kubeconfig files under {{ work_dir }}/*-kubeconfig.yaml"
+
+    - name: Distribute cluster-proxy-ca-bundle to managed cluster via oc (from-file + apply, 3 retries)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        set -o pipefail
+        K="{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        B="{{ work_dir }}/combined-ca-bundle.crt"
+        echo "=== odf-ssl: cluster-proxy-ca-bundle -> {{ item }} (kubeconfig=$K) ==="
+        test -s "$K"
+        test -s "$B"
+        for attempt in 1 2 3; do
+          echo "  attempt ${attempt}/3 ..."
+          if oc --kubeconfig="$K" create configmap cluster-proxy-ca-bundle \
+            --from-file=ca-bundle.crt="$B" \
+            -n openshift-config \
+            --dry-run=client -o yaml \
+            | oc --kubeconfig="$K" apply -f -; then
+            if oc --kubeconfig="$K" patch proxy/cluster --type=merge \
+              --patch='{"spec":{"trustedCA":{"name":"cluster-proxy-ca-bundle"}}}'; then
+              echo "RESULT ok cluster={{ item }}"
+              exit 0
+            else
+              echo "  proxy patch failed (see oc stderr above)" >&2
+            fi
+          else
+            echo "  configmap apply failed (see oc stderr above)" >&2
+          fi
+          if [[ "$attempt" -lt 3 ]]; then sleep 10; fi
+        done
+        echo "RESULT fail cluster={{ item }} after 3 attempts" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      loop: "{{ managed_clusters }}"
+      when: (work_dir + '/' + item + '-kubeconfig.yaml') is file
+      loop_control:
+        label: "{{ item }}"
+      register: mc_oc_distribute
+      failed_when: false
+
+    - name: Fail when oc distribution failed on a spoke (full stdout/stderr)
+      ansible.builtin.fail:
+        msg: |-
+          cluster-proxy-ca-bundle was NOT applied on {{ item.item }}.
+          Common causes: Forbidden (kubeconfig user cannot create ConfigMap in openshift-config or patch proxies/cluster),
+          invalid/expired kubeconfig, or network to the spoke API.
+          --- stdout ---
+          {{ item.stdout | default('', true) }}
+          --- stderr ---
+          {{ item.stderr | default('', true) }}
+      loop: "{{ mc_oc_distribute.results | default([]) }}"
+      when: not item.skipped | default(false) and (item.rc | default(1)) != 0
+
+    - name: Verify cluster-proxy-ca-bundle and proxy.trustedCA on each spoke (oc)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        K="{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        sz=$(oc --kubeconfig="$K" get configmap cluster-proxy-ca-bundle -n openshift-config \
+          -o jsonpath='{.data.ca-bundle\.crt}' 2>/dev/null | wc -c | tr -d ' ' || echo 0)
+        trust=$(oc --kubeconfig="$K" get proxy cluster -o jsonpath='{.spec.trustedCA.name}' 2>/dev/null || echo "")
+        echo "cluster={{ item }} ca-bundle.crt_bytes=$sz spec.trustedCA.name=$trust"
+        test "${sz:-0}" -ge 64
+        test "$trust" = "cluster-proxy-ca-bundle"
+      args:
+        executable: /bin/bash
+      loop: "{{ managed_clusters }}"
+      when: (work_dir + '/' + item + '-kubeconfig.yaml') is file
+      loop_control:
+        label: "{{ item }}"
+      register: mc_oc_verify
+      failed_when: false
+
+    - name: Fail when post-push verification failed on a spoke
+      ansible.builtin.fail:
+        msg: |-
+          Verification failed on {{ item.item }} (ConfigMap empty/missing or Proxy.spec.trustedCA not cluster-proxy-ca-bundle).
+          Re-check ACM policies on the spoke that might overwrite cluster-proxy-ca-bundle.
+          --- stdout ---
+          {{ item.stdout | default('', true) }}
+          --- stderr ---
+          {{ item.stderr | default('', true) }}
+      loop: "{{ mc_oc_verify.results | default([]) }}"
+      when: not item.skipped | default(false) and (item.rc | default(1)) != 0
+
     - name: Get ramenddr pods per cluster
       kubernetes.core.k8s_info:
         kind: Pod
@@ -325,118 +421,6 @@
         target_cluster: "{{ velero_pod_query.item }}"
         pods_to_delete: "{{ velero_pod_query.resources | default([]) }}"
         pod_namespace: openshift-adp
-
-    - name: Distribute CA bundle to managed cluster
-      block:
-        - name: Create cluster-proxy-ca-bundle on managed cluster
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: v1
-              kind: ConfigMap
-              metadata:
-                name: cluster-proxy-ca-bundle
-                namespace: openshift-config
-              data:
-                ca-bundle.crt: "{{ lookup('file', work_dir + '/combined-ca-bundle.crt') }}"
-            kubeconfig: "{{ work_dir }}/{{ item }}-kubeconfig.yaml"
-          loop: "{{ managed_clusters }}"
-          when: (work_dir + '/' + item + '-kubeconfig.yaml') is file
-          loop_control:
-            label: "{{ item }}"
-          register: mc_proxy_cm_create
-          failed_when: false
-
-        - name: Patch proxy on managed cluster
-          kubernetes.core.k8s:
-            state: present
-            definition:
-              apiVersion: config.openshift.io/v1
-              kind: Proxy
-              metadata:
-                name: cluster
-              spec:
-                trustedCA:
-                  name: cluster-proxy-ca-bundle
-            kubeconfig: "{{ work_dir }}/{{ item }}-kubeconfig.yaml"
-          loop: "{{ managed_clusters }}"
-          when: (work_dir + '/' + item + '-kubeconfig.yaml') is file
-          loop_control:
-            label: "{{ item }}"
-          register: mc_proxy_trusted_ca_patch
-          failed_when: false
-
-        - name: Collect cluster-proxy-ca-bundle apply failures
-          ansible.builtin.set_fact:
-            _mc_cm_apply_errors: >-
-              {{
-                (_mc_cm_apply_errors | default([]))
-                + [ (item.item | string) ~ ': ' ~ (item.msg | default('unknown error')) ]
-              }}
-          loop: "{{ mc_proxy_cm_create.results | default([]) }}"
-          when: not item.skipped | default(false) and item.failed | default(false)
-
-        - name: Collect managed-cluster Proxy patch failures
-          ansible.builtin.set_fact:
-            _mc_proxy_patch_errors: >-
-              {{
-                (_mc_proxy_patch_errors | default([]))
-                + [ (item.item | string) ~ ': ' ~ (item.msg | default('unknown error')) ]
-              }}
-          loop: "{{ mc_proxy_trusted_ca_patch.results | default([]) }}"
-          when: not item.skipped | default(false) and item.failed | default(false)
-
-        - name: Fail when cluster-proxy-ca-bundle could not be applied on a managed cluster
-          ansible.builtin.fail:
-            msg: >-
-              Create/patch failed on one or more clusters (API rejected the task; was previously hidden by failed_when:false).
-              ConfigMap errors: {{ _mc_cm_apply_errors | default([]) }}.
-              Proxy patch errors: {{ _mc_proxy_patch_errors | default([]) }}.
-              Typical causes: invalid kubeconfig, RBAC on the spoke, or network to the spoke API.
-          when: >-
-            (_mc_cm_apply_errors | default([]) | length) > 0
-            or (_mc_proxy_patch_errors | default([]) | length) > 0
-
-        - name: Re-read cluster-proxy-ca-bundle on each managed cluster (verify distribution)
-          kubernetes.core.k8s_info:
-            kind: ConfigMap
-            name: cluster-proxy-ca-bundle
-            namespace: openshift-config
-            kubeconfig: "{{ work_dir }}/{{ item }}-kubeconfig.yaml"
-          loop: "{{ managed_clusters }}"
-          when: (work_dir + '/' + item + '-kubeconfig.yaml') is file
-          loop_control:
-            label: "{{ item }}"
-          register: mc_bundle_after_apply
-          failed_when: false
-
-        - name: Fail when spoke still has no cluster-proxy-ca-bundle after apply
-          ansible.builtin.fail:
-            msg: >-
-              CA config ({{ item.item }}):
-              {{ ('API error reading openshift-config — ' ~ (item.msg | default('unknown'))) if (item.failed | default(false)) else 'ConfigMap cluster-proxy-ca-bundle not found in openshift-config.' }}
-              If apply succeeded moments ago, check spoke RBAC and policies that remove this ConfigMap.
-          loop: "{{ mc_bundle_after_apply.results | default([]) }}"
-          when: >-
-            not item.skipped | default(false)
-            and (
-              item.failed | default(false)
-              or (item.resources | default([]) | length) == 0
-            )
-
-        - name: Fail when spoke bundle data is empty (0 chars)
-          ansible.builtin.fail:
-            msg: >-
-              CA material: {{ 'primary' if (item.item == primary_cluster) else ('secondary' if (item.item == secondary_cluster) else 'cluster') }}
-              ({{ item.item }}) bundle missing or too small
-              ({{ ((item.resources[0].data | default({})).get('ca-bundle.crt', '') | length) }} chars).
-              Expect non-empty ca-bundle.crt after hub merge; if hub bundle is valid, check for a policy on the spoke
-              that reconciles cluster-proxy-ca-bundle back to an empty placeholder.
-          loop: "{{ mc_bundle_after_apply.results | default([]) }}"
-          when: >-
-            not item.skipped | default(false)
-            and (item.resources | default([]) | length) > 0
-            and (((item.resources[0].data | default({})).get('ca-bundle.crt', '') | length) | int) < 64
 
     - name: ODF SSL certificate extraction completed
       ansible.builtin.debug:
