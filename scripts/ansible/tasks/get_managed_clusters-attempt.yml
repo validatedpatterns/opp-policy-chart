@@ -1,0 +1,9 @@
+---
+- name: Get managed clusters attempt
+  block:
+    - name: Include managed cluster discovery tasks
+      ansible.builtin.include_tasks: get_managed_clusters.yml
+  rescue:
+    - name: Mark clusters not ready after failed discovery attempt
+      ansible.builtin.set_fact:
+        clusters_ready: false

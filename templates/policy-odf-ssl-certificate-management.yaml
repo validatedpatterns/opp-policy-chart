@@ -28,18 +28,8 @@ spec:
           argocd.argoproj.io/compare-options: IgnoreExtraneous
       spec:
         object-templates:
-        - complianceType: musthave
-          objectDefinition:
-            apiVersion: v1
-            kind: ConfigMap
-            metadata:
-              name: cluster-proxy-ca-bundle
-              namespace: openshift-config
-              labels:
-                app.kubernetes.io/name: odf-ssl-certificate-management
-                app.kubernetes.io/component: ca-bundle
-              annotations:
-                policy.open-cluster-management.io/description: "Combined CA bundle for ODF disaster recovery SSL access"
+        # Do not enforce the ConfigMap body here. A metadata-only template reconciles to an empty
+        # cluster-proxy-ca-bundle and wipes ca-bundle.crt written by odf-ssl-certificate-extractor.
         - complianceType: musthave
           objectDefinition:
             apiVersion: config.openshift.io/v1

@@ -10,14 +10,15 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
-  backoffLimit: 20  # Increased for long cluster startup times
-  activeDeadlineSeconds: 6000  # 100 minutes - allows for 90 minutes of script execution plus buffer
+  backoffLimit: 20
+  activeDeadlineSeconds: 6000
   template:
     spec:
       restartPolicy: OnFailure
       containers:
       - name: argocd-health-monitor
-        image: registry.redhat.io/openshift4/ose-cli:latest
+        image: quay.io/validatedpatterns/utility-container:latest
+        workingDir: /playbooks
         env:
         - name: PRIMARY_CLUSTER
           value: {{ include "opp.primaryClusterName" . | quote }}
@@ -37,11 +38,40 @@ spec:
           value: Namespace
         - name: FORCE_SYNC_RESOURCE_NAME
           value: {{ include "opp.managedClusterGroupNamespace" . | quote }}
+        resources:
+          requests:
+            memory: "384Mi"
+            cpu: "100m"
+          limits:
+            memory: "768Mi"
+            cpu: "500m"
         command:
-        - /bin/bash
+        - ansible-playbook
+        args:
+        - -i
+        - localhost,
         - -c
-        - |
-{{ .Files.Get "scripts/argocd-health-monitor.sh" | indent 10 }}
+        - local
+        - /playbooks/argocd-health-monitor-job.yml
+        volumeMounts:
+        - name: playbooks
+          mountPath: /playbooks
+          readOnly: true
+      volumes:
+      - name: playbooks
+        configMap:
+          name: argocd-health-monitor-playbooks
+          items:
+          - key: argocd-health-monitor-job.yml
+            path: argocd-health-monitor-job.yml
+          - key: argocd-health-monitor-cron.yml
+            path: argocd-health-monitor-cron.yml
+          - key: tasks_kubeconfig.yml
+            path: tasks/kubeconfig.yml
+          - key: tasks_get_managed_clusters.yml
+            path: tasks/get_managed_clusters.yml
+          - key: tasks_argocd_health_check_one_attempt.yml
+            path: tasks/argocd-health-check-one-attempt.yml
       serviceAccountName: argocd-health-monitor
 
 {{- end }}

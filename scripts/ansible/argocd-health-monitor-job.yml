@@ -1,0 +1,92 @@
+---
+# ArgoCD health monitor - Job (one-shot, long-running).
+# Retries until both primary and secondary Argo CD instances are healthy, then exits.
+# Requires: kubernetes.core. Run from Helm Job; env set by chart (MANAGED_CLUSTER_GROUP_*, FORCE_SYNC_*).
+# Env: KUBECONFIG, PRIMARY_CLUSTER, SECONDARY_CLUSTER, MANAGED_CLUSTER_GROUP_NAMESPACE, MANAGED_CLUSTER_GROUP_NAME, FORCE_SYNC_*.
+- name: ArgoCD health monitoring (Job)
+  hosts: localhost
+  gather_facts: true
+  vars:
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    managed_cluster_group_namespace: "{{ lookup('env', 'MANAGED_CLUSTER_GROUP_NAMESPACE') | default('', true) }}"
+    managed_cluster_group_name: "{{ lookup('env', 'MANAGED_CLUSTER_GROUP_NAME') | default('', true) }}"
+    cluster_argocd_namespace: "{{ managed_cluster_group_namespace }}"
+    cluster_argocd_instance: "{{ managed_cluster_group_name }}-gitops-server"
+    force_sync_app_namespace: "{{ lookup('env', 'FORCE_SYNC_APP_NAMESPACE') | default('openshift-gitops', true) }}"
+    force_sync_app_name: "{{ lookup('env', 'FORCE_SYNC_APP_NAME') | default(managed_cluster_group_namespace, true) }}"
+    force_sync_resource_kind: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_KIND') | default('Namespace', true) }}"
+    force_sync_resource_name: "{{ lookup('env', 'FORCE_SYNC_RESOURCE_NAME') | default(managed_cluster_group_namespace, true) }}"
+    argocd_namespace: "openshift-gitops"
+    max_attempts: 180
+    sleep_interval: 30
+    expected_cluster_count: "{{ lookup('env', 'MIN_MANAGED_CLUSTERS') | default(1, true) | int }}"
+  tasks:
+    - name: Require managed clustergroup env vars (set by Helm chart)
+      ansible.builtin.assert:
+        that:
+          - managed_cluster_group_namespace | length > 0
+          - managed_cluster_group_name | length > 0
+        fail_msg: "MANAGED_CLUSTER_GROUP_NAMESPACE and MANAGED_CLUSTER_GROUP_NAME must be set (by the chart or environment)."
+
+    # Trim only; do not export empty KUBECONFIG — that breaks in-cluster API auth (empty list of ManagedClusters).
+    - name: Set hub kubeconfig path when running outside cluster
+      ansible.builtin.set_fact:
+        kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
+
+    - name: Kubernetes API access (in-cluster SA when KUBECONFIG unset)
+      environment: "{{ {'KUBECONFIG': kubeconfig} if kubeconfig | length > 0 else {} }}"
+      block:
+        # Loop + include_tasks does not reliably persist clusters_ready between iterations, so the wait
+        # re-ran get_managed_clusters hundreds of times. Single until/retry on k8s_info avoids that.
+        - name: Minimum managed clusters required (MIN_MANAGED_CLUSTERS, default 1)
+          ansible.builtin.set_fact:
+            _wait_min_clusters: "{{ lookup('env', 'MIN_MANAGED_CLUSTERS') | default(1, true) | int }}"
+
+        - name: Wait until enough ManagedCluster resources on hub (excl. local-cluster)
+          kubernetes.core.k8s_info:
+            api_version: cluster.open-cluster-management.io/v1
+            kind: ManagedCluster
+          register: managed_clusters_poll
+          until: >-
+            (managed_clusters_poll.resources | default([])
+            | map(attribute='metadata.name')
+            | reject('equalto', 'local-cluster')
+            | list
+            | length
+            | int) >= (_wait_min_clusters | int)
+          retries: 300
+          delay: "{{ sleep_interval | int }}"
+
+        - name: Set expected cluster list for health checks
+          ansible.builtin.set_fact:
+            expected_clusters: >-
+              {{
+                managed_clusters_poll.resources
+                | default([])
+                | map(attribute='metadata.name')
+                | reject('equalto', 'local-cluster')
+                | list
+                | sort
+              }}
+
+        - name: Run health check attempts until all healthy or max attempts
+          ansible.builtin.include_tasks: tasks/argocd-health-check-one-attempt.yml
+          loop: "{{ range(1, max_attempts + 1) | list }}"
+          loop_control:
+            extended: true
+            index_var: attempt_idx
+            label: "{{ 'Attempt ' + (attempt_idx | string) + ' of ' + (max_attempts | string) }}"
+          vars:
+            attempt: "{{ attempt_idx }}"
+          when: not (all_healthy | default(false) | bool)
+          register: attempt_result
+
+        - name: Fail when not all clusters healthy after max attempts
+          ansible.builtin.fail:
+            msg: "ArgoCD health monitoring did not complete within {{ max_attempts }} attempts."
+          when: not (all_healthy | default(false) | bool)
+
+        - name: Success
+          ansible.builtin.debug:
+            msg: "All clusters are healthy - health monitoring completed successfully."

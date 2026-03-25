@@ -1,0 +1,41 @@
+---
+# Get managed clusters from hub (exclude local-cluster). Set expected_clusters and clusters_ready.
+- name: Get list of managed clusters (hub)
+  kubernetes.core.k8s_info:
+    api_version: cluster.open-cluster-management.io/v1
+    kind: ManagedCluster
+  register: managed_clusters_result
+
+- name: Set expected clusters (exclude local-cluster, sorted for deterministic order)
+  ansible.builtin.set_fact:
+    expected_clusters: >-
+      {{
+        managed_clusters_result.resources
+        | default([])
+        | map(attribute='metadata.name')
+        | reject('equalto', 'local-cluster')
+        | list
+        | sort
+      }}
+
+- name: Set clusters_ready when we have enough clusters
+  ansible.builtin.set_fact:
+    clusters_ready: >-
+      {{
+        (expected_clusters | length | int)
+        >= ((_wait_min_clusters | default(expected_cluster_count | default(2), true)) | int)
+      }}
+
+- name: Log managed cluster wait status (why we pause)
+  ansible.builtin.debug:
+    msg: >-
+      ManagedCluster count (excluding local-cluster): {{ expected_clusters | length }} —
+      names: {{ expected_clusters | default([]) }} —
+      need at least {{ _wait_min_clusters | default(expected_cluster_count | default(2), true) | int }}
+      (Job: MIN_MANAGED_CLUSTERS; precheck: expected_cluster_count). On hub: oc get managedcluster.
+  when: not clusters_ready | bool
+
+- name: Pause when waiting for managed clusters
+  ansible.builtin.pause:
+    seconds: "{{ sleep_interval | default(30) | int }}"
+  when: not clusters_ready | bool

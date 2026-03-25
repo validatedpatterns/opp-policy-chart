@@ -1,4 +1,4 @@
-# vp-template
+# opp-policy-chart
 
 ![Version: 0.0.1](https://img.shields.io/badge/Version-0.0.1-informational?style=flat-square)
 

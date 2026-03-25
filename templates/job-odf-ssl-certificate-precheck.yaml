@@ -13,7 +13,8 @@ metadata:
     argocd.argoproj.io/hook: "PostSync"
     argocd.argoproj.io/hook-delete-policy: "BeforeHookCreation"
 spec:
-  backoffLimit: 10
+  # Each failed Pod (e.g. OOM) counts toward backoff; lower limit avoids many dead Pods while debugging.
+  backoffLimit: 5
   activeDeadlineSeconds: 7200
   template:
     spec:
@@ -21,21 +22,41 @@ spec:
       restartPolicy: Never
       containers:
       - name: odf-ssl-precheck
-        image: registry.redhat.io/openshift4/ose-cli:latest
+        image: quay.io/validatedpatterns/utility-container:latest
+        workingDir: /playbooks
+        # Ansible + kubernetes client; raise if OOMKilled (exit 137) during long until loops.
         resources:
           requests:
-            memory: "64Mi"
-            cpu: "50m"
-          limits:
-            memory: "128Mi"
+            memory: "384Mi"
             cpu: "100m"
+          limits:
+            memory: "768Mi"
+            cpu: "500m"
         env:
         - name: PRIMARY_CLUSTER
           value: {{ include "opp.primaryClusterName" . | quote }}
         - name: SECONDARY_CLUSTER
           value: {{ include "opp.secondaryClusterName" . | quote }}
         command:
-        - /bin/bash
+        - ansible-playbook
+        args:
+        - -i
+        - localhost,
         - -c
-        - |
-          {{- .Files.Get "scripts/odf-ssl-precheck.sh" | nindent 10 }}
+        - local
+        - /playbooks/odf-ssl-precheck.yml
+        volumeMounts:
+        - name: playbooks
+          mountPath: /playbooks
+          readOnly: true
+      volumes:
+      - name: playbooks
+        configMap:
+          name: odf-ssl-precheck-playbooks
+          items:
+          - key: odf-ssl-precheck.yml
+            path: odf-ssl-precheck.yml
+          - key: tasks_kubeconfig.yml
+            path: tasks/kubeconfig.yml
+          - key: tasks_kubeconfig_attempt.yml
+            path: tasks/kubeconfig-attempt.yml
