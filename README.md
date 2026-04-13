@@ -14,9 +14,6 @@ v0.1.0 - Initial release
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| argocdHealthMonitor.enabled | bool | `true` |  |
-| argocdHealthMonitor.forceSyncAppNamespace | string | `"openshift-gitops"` |  |
-| argocdHealthMonitor.forceSyncResourceKind | string | `"Namespace"` |  |
 | regionalDR[0].clusters.primary.name | string | `"ocp-primary"` |  |
 | regionalDR[0].clusters.secondary.name | string | `"ocp-secondary"` |  |
 | regionalDR[0].name | string | `"resilient"` |  |
