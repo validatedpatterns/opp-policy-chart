@@ -10,3 +10,8 @@ regionalDR:
         name: ocp-primary
       secondary:
         name: ocp-secondary
+
+# odf-ssl-certificate-extractor Job: wait for both DR ManagedClusters (ManagedClusterConditionAvailable=True) before extraction.
+odfSslCertificateExtractor:
+  clusterReadinessMaxAttempts: 150
+  clusterReadinessSleepSeconds: 30

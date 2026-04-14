@@ -9,7 +9,7 @@ MIN_CERTIFICATES=15
 MIN_BUNDLE_SIZE=20000
 MAX_ATTEMPTS=120  
 SLEEP_INTERVAL=30
-CLUSTER_READINESS_MAX_ATTEMPTS=120  # Wait up to 60 minutes for clusters to be ready (120 * 30s)
+CLUSTER_READINESS_MAX_ATTEMPTS=150  # Wait up to 75 minutes for clusters to be ready (150 * 30s)
 CLUSTER_READINESS_SLEEP=30
 
 # Function to clean up placeholder ConfigMaps

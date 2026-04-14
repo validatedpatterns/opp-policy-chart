@@ -12,6 +12,8 @@
     secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
     required_clusters: ["hub", "{{ primary_cluster }}", "{{ secondary_cluster }}"]
     kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
+    cluster_readiness_max_attempts: "{{ lookup('env', 'CLUSTER_READINESS_MAX_ATTEMPTS') | default(150, true) | int }}"
+    cluster_readiness_sleep: "{{ lookup('env', 'CLUSTER_READINESS_SLEEP_SECONDS') | default(30, true) | int }}"
   tasks:
     - name: Log job context (cluster names, paths, auth hint)
       ansible.builtin.debug:
@@ -27,6 +29,9 @@
         path: "{{ work_dir }}"
         state: directory
         mode: "0755"
+
+    - name: Wait for both managed clusters to be up before extraction
+      ansible.builtin.include_tasks: tasks/wait-dr-managedclusters-available.yml
 
     - name: Extract hub CA (current context)
       ansible.builtin.include_tasks: tasks/odf-ssl-extract-ca.yml

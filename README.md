@@ -14,6 +14,8 @@ v0.1.0 - Initial release
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| odfSslCertificateExtractor.clusterReadinessMaxAttempts | int | `150` |  |
+| odfSslCertificateExtractor.clusterReadinessSleepSeconds | int | `30` |  |
 | regionalDR[0].clusters.primary.name | string | `"ocp-primary"` |  |
 | regionalDR[0].clusters.secondary.name | string | `"ocp-secondary"` |  |
 | regionalDR[0].name | string | `"resilient"` |  |

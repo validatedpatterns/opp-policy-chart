@@ -31,6 +31,10 @@ spec:
           value: {{ include "opp.secondaryClusterName" . | quote }}
         - name: ANSIBLE_NOCOLOR
           value: "true"
+        - name: CLUSTER_READINESS_MAX_ATTEMPTS
+          value: {{ .Values.odfSslCertificateExtractor.clusterReadinessMaxAttempts | default 150 | quote }}
+        - name: CLUSTER_READINESS_SLEEP_SECONDS
+          value: {{ .Values.odfSslCertificateExtractor.clusterReadinessSleepSeconds | default 30 | quote }}
         command:
         - ansible-playbook
         args:
@@ -59,6 +63,8 @@ spec:
             path: tasks/odf-ssl-extract-ca.yml
           - key: tasks_odf_ssl_delete_pods.yml
             path: tasks/odf-ssl-delete-pods.yml
+          - key: tasks_wait_dr_managedclusters_available.yml
+            path: tasks/wait-dr-managedclusters-available.yml
       restartPolicy: Never
       serviceAccountName: odf-ssl-extractor-sa
   backoffLimit: 10

@@ -13,7 +13,7 @@
     min_bundle_size: "{{ lookup('env', 'MIN_CA_BUNDLE_BYTES') | default(4096, true) | int }}"
     max_attempts: 120
     sleep_interval: 30
-    cluster_readiness_max_attempts: 120
+    cluster_readiness_max_attempts: 150
     cluster_readiness_sleep: 30
     # Precheck is Argo sync wave 2; odf-ssl-certificate-extractor is wave 1 and may still be running.
     bundle_wait_retries: "{{ lookup('env', 'BUNDLE_WAIT_RETRIES') | default(60, true) | int }}"
