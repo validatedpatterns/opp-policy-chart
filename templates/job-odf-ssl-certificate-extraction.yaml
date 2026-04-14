@@ -68,4 +68,4 @@ spec:
       restartPolicy: Never
       serviceAccountName: odf-ssl-extractor-sa
   backoffLimit: 10
-  activeDeadlineSeconds: 3600
+  activeDeadlineSeconds: 7200
