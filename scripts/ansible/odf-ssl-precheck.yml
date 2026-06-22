@@ -18,6 +18,7 @@
     # Precheck is Argo sync wave 2; odf-ssl-certificate-extractor is wave 1 and may still be running.
     bundle_wait_retries: "{{ lookup('env', 'BUNDLE_WAIT_RETRIES') | default(60, true) | int }}"
     bundle_wait_delay: "{{ lookup('env', 'BUNDLE_WAIT_DELAY_SECONDS') | default(30, true) | int }}"
+    cluster_ca_mgt_namespace: "{{ lookup('env', 'CLUSTER_CA_MGT_NAMESPACE') | default('cluster-ca-mgt', true) }}"
     kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
   tasks:
     # Waits cluster_readiness_sleep seconds BETWEEN k8s_info attempts, same Pod (Ansible until/retries/delay).
@@ -170,11 +171,11 @@
               or "This will be populated" in (item.resources[0].data.get('ca-bundle.crt', '') or '')
             )
           failed_when: false
-    - name: Trigger certificate extraction (create Job in openshift-config - handled by ArgoCD/Helm)
+    - name: Trigger certificate extraction (create Job in workload namespace - handled by ArgoCD/Helm)
       ansible.builtin.debug:
         msg: >-
           Certificate distribution incomplete. Trigger or re-sync the
-          odf-ssl-certificate-extractor Job in openshift-config namespace,
+          odf-ssl-certificate-extractor Job in {{ cluster_ca_mgt_namespace }} namespace,
           then re-run this precheck.
       when: not (certificate_distribution_ok | default(false) | bool)
 

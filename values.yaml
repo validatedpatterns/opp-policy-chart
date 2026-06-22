@@ -1,4 +1,12 @@
 ---
+# Namespace for ODF SSL extraction/precheck Jobs, playbooks, and RBAC.
+# cluster-proxy-ca-bundle remains in openshift-config (Proxy.spec.trustedCA requirement).
+clusterCaMgt:
+  # -- Namespace for ODF SSL certificate extraction and precheck workloads.
+  namespace: cluster-ca-mgt
+  # -- Create clusterCaMgt.namespace when installing the chart.
+  createNamespace: false
+
 # DR pair cluster names - same structure as rdr chart (regionalDR).
 # Override via values-hub or overrides so opp-policy and rdr use the same names.
 # These MUST match ACM ManagedCluster metadata.name (e.g. mjrtd420-1); otherwise kubeconfig/CA paths and

@@ -11,3 +11,8 @@
 {{- $fromOver := index $over "name" -}}
 {{- if $fromOver }}{{ $fromOver }}{{- else if and .Values.regionalDR (index .Values.regionalDR 0) }}{{ (index .Values.regionalDR 0).clusters.secondary.name | default "ocp-secondary" }}{{- else }}ocp-secondary{{ end -}}
 {{- end -}}
+
+{{/* Namespace for ODF SSL certificate extraction/precheck workloads */}}
+{{- define "opp.clusterCaMgtNamespace" -}}
+{{- .Values.clusterCaMgt.namespace | default "cluster-ca-mgt" -}}
+{{- end -}}

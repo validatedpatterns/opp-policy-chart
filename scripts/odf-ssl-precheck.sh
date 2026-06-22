@@ -5,6 +5,7 @@ echo "Starting ODF SSL certificate precheck and distribution..."
 echo "This job ensures certificates are properly distributed before DR policies are applied"
 
 # Configuration
+CLUSTER_CA_MGT_NAMESPACE="${CLUSTER_CA_MGT_NAMESPACE:-cluster-ca-mgt}"
 MIN_CERTIFICATES=15
 MIN_BUNDLE_SIZE=20000
 MAX_ATTEMPTS=120  
@@ -178,7 +179,7 @@ check_certificate_distribution() {
 trigger_certificate_extraction() {
   echo "Triggering certificate extraction..."
   
-  oc delete job odf-ssl-certificate-extractor -n openshift-config --ignore-not-found=true
+  oc delete job odf-ssl-certificate-extractor -n "$CLUSTER_CA_MGT_NAMESPACE" --ignore-not-found=true
   sleep 5
   
   echo "Creating certificate extraction job..."
@@ -187,7 +188,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: odf-ssl-certificate-extractor
-  namespace: openshift-config
+  namespace: ${CLUSTER_CA_MGT_NAMESPACE}
   labels:
     app.kubernetes.io/name: odf-ssl-certificate-management
     app.kubernetes.io/component: certificate-extraction
@@ -821,7 +822,7 @@ EOF
     attempt=$((attempt + 1))
     echo "  Attempt $attempt/$MAX_ATTEMPTS"
     
-    if oc wait --for=condition=complete job/odf-ssl-certificate-extractor -n openshift-config --timeout=60s 2>/dev/null; then
+    if oc wait --for=condition=complete job/odf-ssl-certificate-extractor -n "$CLUSTER_CA_MGT_NAMESPACE" --timeout=60s 2>/dev/null; then
       echo "  ✅ Certificate extraction completed successfully"
       return 0
     else
