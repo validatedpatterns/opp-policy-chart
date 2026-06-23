@@ -10,6 +10,16 @@ BASE_DELAY=30
 MAX_DELAY=300
 RETRY_COUNT=0
 
+array_contains() {
+  local needle="$1"
+  shift
+  local item
+  for item in "$@"; do
+    [[ "$item" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # Function to implement exponential backoff
 exponential_backoff() {
   local delay=$((BASE_DELAY * (2 ** RETRY_COUNT)))
@@ -140,7 +150,7 @@ create_combined_ca_bundle() {
   ca_files=("$@")
   
   echo "Creating combined CA bundle..."
-  > "$output_file"
+  : > "$output_file"
   
   file_count=0
   for ca_file in "${ca_files[@]}"; do
@@ -252,16 +262,14 @@ for cluster in $MANAGED_CLUSTERS; do
     KUBECONFIG_FILE="$WORK_DIR/${cluster}-kubeconfig.yaml"
   fi
   
-  cluster_ca_extracted=false
   if extract_cluster_ca "$cluster" "$WORK_DIR/${cluster}-ca.crt" "$KUBECONFIG_FILE"; then
     CA_FILES+=("$WORK_DIR/${cluster}-ca.crt")
     EXTRACTED_CLUSTERS+=("$cluster")
-    cluster_ca_extracted=true
     echo "  Certificate size: $(wc -c < "$WORK_DIR/${cluster}-ca.crt") bytes"
   else
     echo "  ❌ Could not extract CA from $cluster - REQUIRED for DR setup"
   fi
-  
+
   # Extract ingress CA from managed cluster
   echo "3b.$index Extracting ingress CA from $cluster..."
   if extract_ingress_ca "$cluster" "$WORK_DIR/${cluster}-ingress-ca.crt" "$KUBECONFIG_FILE"; then
@@ -278,7 +286,7 @@ done
 echo "4. Validating CA extraction from required clusters..."
 MISSING_CLUSTERS=()
 for required_cluster in "${REQUIRED_CLUSTERS[@]}"; do
-  if [[ " ${EXTRACTED_CLUSTERS[@]} " =~ " ${required_cluster} " ]]; then
+  if array_contains "$required_cluster" "${EXTRACTED_CLUSTERS[@]}"; then
     echo "  ✅ CA extracted from $required_cluster"
   else
     echo "  ❌ CA NOT extracted from $required_cluster"
@@ -630,7 +638,7 @@ done
 echo "10. Validating verification results..."
 MISSING_VERIFICATION_CLUSTERS=()
 for required_cluster in "${REQUIRED_VERIFICATION_CLUSTERS[@]}"; do
-  if [[ " ${VERIFIED_CLUSTERS[@]} " =~ " ${required_cluster} " ]]; then
+  if array_contains "$required_cluster" "${VERIFIED_CLUSTERS[@]}"; then
     echo "  ✅ $required_cluster: Certificate distribution verified"
   else
     echo "  ❌ $required_cluster: Certificate distribution NOT verified"

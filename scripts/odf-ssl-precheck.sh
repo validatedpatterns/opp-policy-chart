@@ -142,7 +142,7 @@ check_certificate_distribution() {
     return 1
   fi
   
-  bundle_size=$(echo "$bundle_content" | wc -c)
+  bundle_size=${#bundle_content}
   echo "  Bundle size: $bundle_size bytes"
   
   if [[ $bundle_size -lt $MIN_BUNDLE_SIZE ]]; then
@@ -176,6 +176,7 @@ check_certificate_distribution() {
 }
 
 # Function to trigger certificate extraction
+# shellcheck disable=SC2120
 trigger_certificate_extraction() {
   echo "Triggering certificate extraction..."
   
@@ -183,6 +184,7 @@ trigger_certificate_extraction() {
   sleep 5
   
   echo "Creating certificate extraction job..."
+  # shellcheck disable=SC2154,SC2076,SC2000,SC2012,SC2035,SC2086
   oc apply -f - <<EOF
 apiVersion: batch/v1
 kind: Job
@@ -813,7 +815,7 @@ spec:
             fi
           done
 EOF
-  
+
   echo "Certificate extraction job created"
   
   echo "Waiting for certificate extraction to complete..."
@@ -866,6 +868,7 @@ main_execution() {
       
       echo "   Triggering certificate extraction (attempt $attempt/$MAX_ATTEMPTS)..."
       
+      # shellcheck disable=SC2119
       if trigger_certificate_extraction; then
         echo "✅ Certificate extraction completed successfully"
         echo "   Re-verifying distribution..."
