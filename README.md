@@ -14,6 +14,8 @@ v0.1.0 - Initial release
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| clusterCaMgt.createNamespace | bool | `false` | Create clusterCaMgt.namespace when installing the chart. |
+| clusterCaMgt.namespace | string | `"cluster-ca-mgt"` | Namespace for ODF SSL certificate extraction and precheck workloads. |
 | odfSslCertificateExtractor.clusterReadinessMaxAttempts | int | `150` |  |
 | odfSslCertificateExtractor.clusterReadinessSleepSeconds | int | `30` |  |
 | regionalDR[0].clusters.primary.name | string | `"ocp-primary"` |  |

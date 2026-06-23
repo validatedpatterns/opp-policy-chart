@@ -5,6 +5,7 @@ echo "Starting ODF SSL certificate precheck and distribution..."
 echo "This job ensures certificates are properly distributed before DR policies are applied"
 
 # Configuration
+CLUSTER_CA_MGT_NAMESPACE="${CLUSTER_CA_MGT_NAMESPACE:-cluster-ca-mgt}"
 MIN_CERTIFICATES=15
 MIN_BUNDLE_SIZE=20000
 MAX_ATTEMPTS=120  
@@ -141,7 +142,7 @@ check_certificate_distribution() {
     return 1
   fi
   
-  bundle_size=$(echo "$bundle_content" | wc -c)
+  bundle_size=${#bundle_content}
   echo "  Bundle size: $bundle_size bytes"
   
   if [[ $bundle_size -lt $MIN_BUNDLE_SIZE ]]; then
@@ -175,19 +176,21 @@ check_certificate_distribution() {
 }
 
 # Function to trigger certificate extraction
+# shellcheck disable=SC2120
 trigger_certificate_extraction() {
   echo "Triggering certificate extraction..."
   
-  oc delete job odf-ssl-certificate-extractor -n openshift-config --ignore-not-found=true
+  oc delete job odf-ssl-certificate-extractor -n "$CLUSTER_CA_MGT_NAMESPACE" --ignore-not-found=true
   sleep 5
   
   echo "Creating certificate extraction job..."
+  # shellcheck disable=SC2154,SC2076,SC2000,SC2012,SC2035,SC2086
   oc apply -f - <<EOF
 apiVersion: batch/v1
 kind: Job
 metadata:
   name: odf-ssl-certificate-extractor
-  namespace: openshift-config
+  namespace: ${CLUSTER_CA_MGT_NAMESPACE}
   labels:
     app.kubernetes.io/name: odf-ssl-certificate-management
     app.kubernetes.io/component: certificate-extraction
@@ -812,7 +815,7 @@ spec:
             fi
           done
 EOF
-  
+
   echo "Certificate extraction job created"
   
   echo "Waiting for certificate extraction to complete..."
@@ -821,7 +824,7 @@ EOF
     attempt=$((attempt + 1))
     echo "  Attempt $attempt/$MAX_ATTEMPTS"
     
-    if oc wait --for=condition=complete job/odf-ssl-certificate-extractor -n openshift-config --timeout=60s 2>/dev/null; then
+    if oc wait --for=condition=complete job/odf-ssl-certificate-extractor -n "$CLUSTER_CA_MGT_NAMESPACE" --timeout=60s 2>/dev/null; then
       echo "  ✅ Certificate extraction completed successfully"
       return 0
     else
@@ -865,6 +868,7 @@ main_execution() {
       
       echo "   Triggering certificate extraction (attempt $attempt/$MAX_ATTEMPTS)..."
       
+      # shellcheck disable=SC2119
       if trigger_certificate_extraction; then
         echo "✅ Certificate extraction completed successfully"
         echo "   Re-verifying distribution..."
