@@ -1,4 +1,4 @@
-{{- if .Values.clusterCaMgt.createNamespace }}
+{{- if ((.Values.clusterCaMgt | default dict).createNamespace) }}
 apiVersion: v1
 kind: Namespace
 metadata:

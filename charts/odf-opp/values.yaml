@@ -7,22 +7,7 @@ clusterCaMgt:
   # -- Create clusterCaMgt.namespace when installing the chart.
   createNamespace: false
 
-# DR pair cluster names - same structure as rdr chart (regionalDR).
-# Override via values-hub or overrides so opp-policy and rdr use the same names.
-# These MUST match ACM ManagedCluster metadata.name (e.g. mjrtd420-1); otherwise kubeconfig/CA paths and
-# cluster-proxy-ca-bundle distribution target the wrong cluster names and spokes stay without a bundle.
-regionalDR:
-  - name: resilient
-    clusters:
-      primary:
-        name: ocp-primary
-      secondary:
-        name: ocp-secondary
-
 # odf-ssl-certificate-extractor Job: wait for both DR ManagedClusters (ManagedClusterConditionAvailable=True) before extraction.
 odfSslCertificateExtractor:
   clusterReadinessMaxAttempts: 150
   clusterReadinessSleepSeconds: 30
-
-odf:
-  enabled: true

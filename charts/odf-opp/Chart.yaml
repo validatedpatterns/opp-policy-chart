@@ -1,0 +1,7 @@
+apiVersion: v2
+description: ODF subchart for opp-policy-chart. Deploys ODF-related resources and policies when odf.enabled=true.
+keywords:
+  - pattern
+  - odf
+name: opp-odf
+version: 0.1.0

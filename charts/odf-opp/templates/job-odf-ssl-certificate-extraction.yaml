@@ -32,9 +32,9 @@ spec:
         - name: ANSIBLE_NOCOLOR
           value: "true"
         - name: CLUSTER_READINESS_MAX_ATTEMPTS
-          value: {{ .Values.odfSslCertificateExtractor.clusterReadinessMaxAttempts | default 150 | quote }}
+          value: {{ ((.Values.odfSslCertificateExtractor | default dict).clusterReadinessMaxAttempts | default 150) | quote }}
         - name: CLUSTER_READINESS_SLEEP_SECONDS
-          value: {{ .Values.odfSslCertificateExtractor.clusterReadinessSleepSeconds | default 30 | quote }}
+          value: {{ ((.Values.odfSslCertificateExtractor | default dict).clusterReadinessSleepSeconds | default 30) | quote }}
         - name: CLUSTER_CA_MGT_NAMESPACE
           value: {{ include "opp.clusterCaMgtNamespace" . | quote }}
         command:
