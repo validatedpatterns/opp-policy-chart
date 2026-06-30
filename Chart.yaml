@@ -4,8 +4,3 @@ keywords:
   - pattern
 name: opp-policy-chart
 version: 0.0.1
-dependencies:
-  - name: opp-odf
-    version: "0.1.0"
-    repository: "file://charts/opp-odf"
-    condition: odf.enabled
