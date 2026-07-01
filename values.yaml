@@ -23,6 +23,3 @@ regionalDR:
 odfSslCertificateExtractor:
   clusterReadinessMaxAttempts: 150
   clusterReadinessSleepSeconds: 30
-
-odf:
-  enabled: true
