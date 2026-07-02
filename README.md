@@ -9,6 +9,7 @@ This chart is provides ODF and ACM bits to support Regional Disaster Recovery
 ## Notable changes
 
 v0.0.2 - Remove all ODF templates and scripts and place them separate in odf-dr chart
+
 v0.0.1 - Initial release
 
 ## Values
