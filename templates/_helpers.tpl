@@ -14,5 +14,6 @@
 
 {{/* Namespace for ODF SSL certificate extraction/precheck workloads */}}
 {{- define "opp.clusterCaMgtNamespace" -}}
-{{- .Values.clusterCaMgt.namespace | default "cluster-ca-mgt" -}}
+{{- $caMgt := .Values.clusterCaMgt | default dict -}}
+{{- $caMgt.namespace | default "cluster-ca-mgt" -}}
 {{- end -}}
