@@ -1,8 +1,9 @@
 ---
-# s3-ssl: verify/distribute CA material sourced from vp-manage-proxy-cluster-ca.
+# s3-ssl: verify/distribute full Proxy trustedCA material from vp-manage-proxy-cluster-ca.
 # Does not extract ingress/API CAs — vp-proxy owns that. This playbook waits for
-# ManagedClusters, reads the vp-proxy ConfigMap on the hub, ensures Proxy.trustedCA
+# ManagedClusters, reads the vp-proxy FULL CA ConfigMap on the hub, ensures Proxy.trustedCA
 # points at it, verifies (or backfills) the same on spokes, and restarts Ramen/Velero pods.
+# Do not point CA_BUNDLE_* at the differential Bundle — that is for s3CaInjector only.
 # Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_NAME, CA_BUNDLE_NAMESPACE, CA_BUNDLE_KEY
 - name: S3 SSL CA sync from vp-proxy
   hosts: localhost

@@ -34,7 +34,8 @@ submariner:
   # -- Enable EC2 security group tagging job. AWS only.
   sgTagJobEnabled: false
 
-# s3-ssl: sync/verify S3 TLS CA material from vp-manage-proxy-cluster-ca onto all clusters.
+# s3-ssl: sync/verify Proxy trustedCA material from vp-manage-proxy-cluster-ca onto all clusters.
+# Must use the FULL Proxy bundle (useDefaultCAs + exports). Never point this at the differential Bundle.
 s3Ssl:
   # -- When false, skip s3-ssl Jobs, playbook ConfigMaps, and ACM CA policies.
   enabled: true
@@ -45,13 +46,12 @@ s3Ssl:
   caBundle:
     # -- Namespace of the vp-proxy trust ConfigMap (vp-manage-proxy-cluster-ca targetNamespace).
     namespace: openshift-config
-    # -- Prefer the differential Bundle (API/ingress CAs from hub+spokes), not the full
-    # Proxy trustedCA ConfigMap (which includes the platform system trust store).
-    name: vp-pattern-proxy-ca-bundle-differential
-    # -- Data key holding PEM (differentialBundle.targetKey; must not contain '.').
-    key: cabundle
+    # -- Full Proxy trustedCA ConfigMap (vp-manage-proxy-cluster-ca configMapName). Not the differential Bundle.
+    name: vp-pattern-proxy-ca-bundle
+    # -- Data key holding PEM for Proxy trustedCA (usually ca-bundle.crt).
+    key: ca-bundle.crt
 
-# Inject caCertificates into Ramen s3StoreProfiles from s3Ssl.caBundle (vp-proxy).
+# Inject caCertificates into Ramen s3StoreProfiles from the vp-proxy differential CA Bundle.
 # Hub Job reads the CA once, patches hub Ramen, then optionally spokes via ACM kubeconfigs.
 s3CaInjector:
   # -- When false, skip the Ramen s3StoreProfiles CA injector Job/CronJob.
@@ -62,6 +62,13 @@ s3CaInjector:
   clusterReadinessMaxAttempts: 150
   # -- Seconds between ManagedCluster readiness polls.
   clusterReadinessSleepSeconds: 30
+  caBundle:
+    # -- Namespace of the differential CA ConfigMap (same targetNamespace as vp-proxy).
+    namespace: openshift-config
+    # -- Differential Bundle only (API/ingress CAs). Do not use the full Proxy system trust store here.
+    name: vp-pattern-proxy-ca-bundle-differential
+    # -- Data key holding PEM (differentialBundle.targetKey; must not contain '.').
+    key: cabundle
   ramen:
     # -- Namespace of hub and managed Ramen operator ConfigMaps.
     namespace: openshift-operators

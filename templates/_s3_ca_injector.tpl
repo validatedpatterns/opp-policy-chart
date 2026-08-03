@@ -6,11 +6,11 @@
 - name: ANSIBLE_NOCOLOR
   value: "true"
 - name: CA_BUNDLE_NAME
-  value: {{ include "opp.s3SslCaBundleName" . | quote }}
+  value: {{ include "opp.s3CaInjectorCaBundleName" . | quote }}
 - name: CA_BUNDLE_NAMESPACE
-  value: {{ include "opp.s3SslCaBundleNamespace" . | quote }}
+  value: {{ include "opp.s3CaInjectorCaBundleNamespace" . | quote }}
 - name: CA_BUNDLE_KEY
-  value: {{ include "opp.s3SslCaBundleKey" . | quote }}
+  value: {{ include "opp.s3CaInjectorCaBundleKey" . | quote }}
 - name: RAMEN_NAMESPACE
   value: {{ include "opp.ramenNamespace" . | quote }}
 - name: RAMEN_HUB_CONFIGMAP

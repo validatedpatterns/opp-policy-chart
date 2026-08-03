@@ -7,8 +7,8 @@ set -euo pipefail
 
 CA_FILE="${CA_FILE:-}"
 CA_NAMESPACE="${CA_NAMESPACE:-openshift-config}"
-CA_CONFIGMAP="${CA_CONFIGMAP:-vp-pattern-proxy-ca-bundle}"
-CA_KEY="${CA_KEY:-ca-bundle.crt}"
+CA_CONFIGMAP="${CA_CONFIGMAP:-vp-pattern-proxy-ca-bundle-differential}"
+CA_KEY="${CA_KEY:-cabundle}"
 RAMEN_NAMESPACE="${RAMEN_NAMESPACE:?RAMEN_NAMESPACE is required}"
 RAMEN_CONFIGMAP="${RAMEN_CONFIGMAP:?RAMEN_CONFIGMAP is required}"
 RAMEN_CONFIG_KEY="${RAMEN_CONFIG_KEY:-ramen_manager_config.yaml}"

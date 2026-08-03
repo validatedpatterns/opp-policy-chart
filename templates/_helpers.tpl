@@ -49,11 +49,11 @@
 {{- if not (hasKey $cfg "enabled") -}}1{{- else if index $cfg "enabled" -}}1{{- else -}}0{{- end -}}
 {{- end -}}
 
-{{/* CA ConfigMap produced by vp-manage-proxy-cluster-ca (source for s3-ssl). */}}
+{{/* Full Proxy trustedCA ConfigMap (source for s3-ssl sync/precheck/policies). */}}
 {{- define "opp.s3SslCaBundleName" -}}
 {{- $cfg := .Values.s3Ssl | default dict -}}
 {{- $ca := $cfg.caBundle | default dict -}}
-{{- $ca.name | default "vp-pattern-proxy-ca-bundle-differential" -}}
+{{- $ca.name | default "vp-pattern-proxy-ca-bundle" -}}
 {{- end -}}
 
 {{- define "opp.s3SslCaBundleNamespace" -}}
@@ -64,6 +64,25 @@
 
 {{- define "opp.s3SslCaBundleKey" -}}
 {{- $cfg := .Values.s3Ssl | default dict -}}
+{{- $ca := $cfg.caBundle | default dict -}}
+{{- $ca.key | default "ca-bundle.crt" -}}
+{{- end -}}
+
+{{/* Differential CA Bundle for Ramen s3StoreProfiles caCertificates (not Proxy.trustedCA). */}}
+{{- define "opp.s3CaInjectorCaBundleName" -}}
+{{- $cfg := .Values.s3CaInjector | default dict -}}
+{{- $ca := $cfg.caBundle | default dict -}}
+{{- $ca.name | default "vp-pattern-proxy-ca-bundle-differential" -}}
+{{- end -}}
+
+{{- define "opp.s3CaInjectorCaBundleNamespace" -}}
+{{- $cfg := .Values.s3CaInjector | default dict -}}
+{{- $ca := $cfg.caBundle | default dict -}}
+{{- $ca.namespace | default "openshift-config" -}}
+{{- end -}}
+
+{{- define "opp.s3CaInjectorCaBundleKey" -}}
+{{- $cfg := .Values.s3CaInjector | default dict -}}
 {{- $ca := $cfg.caBundle | default dict -}}
 {{- $ca.key | default "cabundle" -}}
 {{- end -}}
