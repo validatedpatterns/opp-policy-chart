@@ -1,6 +1,7 @@
 ---
-# Inject caCertificates into Ramen s3StoreProfiles from hub vp-proxy CA (same source as s3-ssl).
+# Inject caCertificates into Ramen s3StoreProfiles from hub vp-proxy differential CA.
 # Hub always; managed clusters when DISTRIBUTE_TO_MANAGED_CLUSTERS=true (default).
+# Skips ConfigMap apply when every profile already has the desired caCertificates.
 # Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_*, RAMEN_*, DISTRIBUTE_TO_MANAGED_CLUSTERS,
 #      ALLOW_MISSING_PROFILES, CA_WAIT_SECONDS, RAMEN_WAIT_SECONDS, POLL_INTERVAL, MIN_PROFILES
 - name: S3 CA inject into Ramen s3StoreProfiles
@@ -76,7 +77,7 @@
       args:
         executable: /bin/bash
       register: hub_inject
-      changed_when: true
+      changed_when: "'Patched caCertificates' in hub_inject.stdout"
 
     - name: Wait for both managed clusters to be Available
       ansible.builtin.include_tasks: tasks/wait-dr-managedclusters-available.yml
@@ -154,15 +155,16 @@
       loop_control:
         label: "{{ item }}"
       register: spoke_inject
-      changed_when: true
+      changed_when: "'Patched caCertificates' in item.stdout"
       when: distribute_to_managed | bool
 
     - name: s3-ca-injector complete
       ansible.builtin.debug:
         msg: >-
-          Hub Ramen profiles patched from vp-proxy CA
+          Hub Ramen profiles checked/patched from vp-proxy differential CA
           {% if distribute_to_managed | bool %}
-          ; managed clusters also patched ({{ managed_clusters | join(', ') }})
+          ; managed clusters also checked/patched ({{ managed_clusters | join(', ') }})
           {% else %}
           ; managed-cluster distribution skipped (distributeToManagedClusters=false)
           {% endif %}
+          (ConfigMap apply skipped when caCertificates already match)

@@ -2,6 +2,7 @@
 # Inject caCertificates into existing Ramen s3StoreProfiles from vp-proxy CA material.
 # Prefer CA_FILE (hub-read PEM shared across targets). Else wait for CA ConfigMap in-cluster.
 # Never creates profiles. Soft-exit when ALLOW_MISSING_PROFILES=true and profiles are absent.
+# Skips ConfigMap apply when every profile already has the desired caCertificates value.
 # Honors KUBECONFIG for managed-cluster targets (empty/unset = hub in-cluster).
 set -euo pipefail
 
@@ -114,34 +115,62 @@ wait_for_ramen_profiles() {
 	die "${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP} never gained >= ${MIN_PROFILES} s3StoreProfiles"
 }
 
+encode_ca_b64() {
+	# Never export the CA as an env var — large bundles exceed ARG_MAX and break yq/strenv.
+	(base64 -w 0 <"$WORK_DIR/ca-bundle.crt" 2>/dev/null || base64 <"$WORK_DIR/ca-bundle.crt" | tr -d '\n') >"$WORK_DIR/ca-bundle.b64"
+	[[ -s "$WORK_DIR/ca-bundle.b64" ]] || die "failed to base64-encode CA bundle"
+}
+
+# Return 0 when every s3StoreProfiles entry already has caCertificates equal to desired b64.
+profiles_match_desired_ca() {
+	local f="$1"
+	local desired="$WORK_DIR/ca-bundle.b64"
+	local path len i existing
+
+	for path in '.s3StoreProfiles' '.kubeObjectProtection.s3StoreProfiles'; do
+		len=$(yq eval "(${path} // []) | length" "$f" 2>/dev/null | tr -d ' \n\r' || echo 0)
+		[[ "$len" =~ ^[0-9]+$ ]] || len=0
+		[[ "$len" -gt 0 ]] || continue
+		for ((i = 0; i < len; i++)); do
+			existing="$WORK_DIR/existing-ca.${path//./_}.$i"
+			# -r + strip newlines so cmp matches base64 -w0 output.
+			yq eval -r "${path}[$i].caCertificates // \"\"" "$f" 2>/dev/null | tr -d '\n\r' >"$existing" || true
+			if ! cmp -s "$desired" "$existing"; then
+				return 1
+			fi
+		done
+	done
+	return 0
+}
+
 patch_profiles() {
 	local f="$WORK_DIR/ramen_manager_config.yaml"
 	local out="$WORK_DIR/ramen_manager_config.patched.yaml"
 	local ca_b64="$WORK_DIR/ca-bundle.b64"
-	cp "$f" "$out"
 
-	# Never export the CA as an env var — large bundles exceed ARG_MAX and break yq/strenv.
-	(base64 -w 0 <"$WORK_DIR/ca-bundle.crt" 2>/dev/null || base64 <"$WORK_DIR/ca-bundle.crt" | tr -d '\n') >"$ca_b64"
-	[[ -s "$ca_b64" ]] || die "failed to base64-encode CA bundle"
+	encode_ca_b64
 
-	local patched=false
 	local top_len kop_len
-	top_len=$(yq eval '(.s3StoreProfiles // []) | length' "$out" 2>/dev/null | tr -d ' \n\r' || echo 0)
-	kop_len=$(yq eval '(.kubeObjectProtection.s3StoreProfiles // []) | length' "$out" 2>/dev/null | tr -d ' \n\r' || echo 0)
+	top_len=$(yq eval '(.s3StoreProfiles // []) | length' "$f" 2>/dev/null | tr -d ' \n\r' || echo 0)
+	kop_len=$(yq eval '(.kubeObjectProtection.s3StoreProfiles // []) | length' "$f" 2>/dev/null | tr -d ' \n\r' || echo 0)
 	[[ "$top_len" =~ ^[0-9]+$ ]] || top_len=0
 	[[ "$kop_len" =~ ^[0-9]+$ ]] || kop_len=0
+	[[ $((top_len + kop_len)) -gt 0 ]] || die "no s3StoreProfiles arrays to patch (top=${top_len} kop=${kop_len})"
 
+	if profiles_match_desired_ca "$f"; then
+		log "Unchanged: caCertificates already current on ${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP} (skip apply)"
+		return 0
+	fi
+
+	cp "$f" "$out"
 	if [[ "$top_len" -gt 0 ]]; then
 		yq eval -i ".s3StoreProfiles[] |= . + {\"caCertificates\": load_str(\"${ca_b64}\")}" "$out" \
 			|| die "yq failed patching top-level s3StoreProfiles"
-		patched=true
 	fi
 	if [[ "$kop_len" -gt 0 ]]; then
 		yq eval -i ".kubeObjectProtection.s3StoreProfiles[] |= . + {\"caCertificates\": load_str(\"${ca_b64}\")}" "$out" \
 			|| die "yq failed patching kubeObjectProtection.s3StoreProfiles"
-		patched=true
 	fi
-	[[ "$patched" == "true" ]] || die "no s3StoreProfiles arrays to patch (top=${top_len} kop=${kop_len})"
 	grep -q 'caCertificates' "$out" || die "patched YAML has no caCertificates"
 
 	# Preserve existing metadata; replace only the RamenConfig data key.
@@ -156,8 +185,9 @@ patch_profiles() {
 
 	oc apply -f "$WORK_DIR/ramen-cm-live.yaml" || die "oc apply failed for ${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP}"
 	log "Patched caCertificates on s3StoreProfiles in ${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP}"
+	# Signal verify_patch that an apply happened.
+	touch "$WORK_DIR/.ca-patched"
 }
-
 verify_patch() {
 	local f="$WORK_DIR/ramen-post-apply.yaml"
 	local attempt pk pt ck ct
@@ -190,6 +220,11 @@ verify_patch() {
 
 resolve_ca_bundle
 wait_for_ramen_profiles
+rm -f "$WORK_DIR/.ca-patched"
 patch_profiles
-verify_patch
+if [[ -f "$WORK_DIR/.ca-patched" ]]; then
+	verify_patch
+else
+	log "Skip verify (no ConfigMap apply)"
+fi
 log "Done."
