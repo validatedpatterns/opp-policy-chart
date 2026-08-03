@@ -1,0 +1,37 @@
+{{- if eq "1" (include "opp.s3CaInjectorEnabled" . | trim) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s3-ca-injector-script
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+data:
+  inject-ramen-s3-ca.sh: |
+{{ .Files.Get "scripts/inject-ramen-s3-ca.sh" | indent 4 }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s3-ca-injector-playbooks
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+data:
+  s3-ca-injector.yml: |
+{{ .Files.Get "scripts/ansible/s3-ca-injector.yml" | indent 4 }}
+  tasks_kubeconfig.yml: |
+{{ .Files.Get "scripts/ansible/tasks/kubeconfig.yml" | indent 4 }}
+  tasks_kubeconfig_attempt.yml: |
+{{ .Files.Get "scripts/ansible/tasks/kubeconfig-attempt.yml" | indent 4 }}
+  tasks_s3_ssl_read_ca.yml: |
+{{ .Files.Get "scripts/ansible/tasks/s3-ssl-read-ca.yml" | indent 4 }}
+  tasks_wait_dr_managedclusters_available.yml: |
+{{ .Files.Get "scripts/ansible/tasks/wait-dr-managedclusters-available.yml" | indent 4 }}
+{{- end }}

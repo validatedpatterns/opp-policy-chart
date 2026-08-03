@@ -1,0 +1,53 @@
+---
+# Read CA material produced by vp-manage-proxy-cluster-ca.
+# Vars: cluster_name, output_path, kubeconfig_path (omit/empty for hub),
+#       ca_bundle_name, ca_bundle_namespace, ca_bundle_key
+- name: Get vp-proxy CA ConfigMap
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    name: "{{ ca_bundle_name | default('vp-pattern-proxy-ca-bundle') }}"
+    namespace: "{{ ca_bundle_namespace | default('openshift-config') }}"
+    kubeconfig: >-
+      {{
+        kubeconfig_path
+        if (kubeconfig_path | default('', true) | trim | length) > 0
+        else omit
+      }}
+  register: ca_cm
+  failed_when: false
+
+- name: Set CA content from ConfigMap data
+  ansible.builtin.set_fact:
+    ca_content: >-
+      {{
+        (
+          ca_cm.resources[0].data.get(ca_bundle_key | default('ca-bundle.crt'))
+          or ca_cm.resources[0].data.get('ca-bundle.crt')
+          or ca_cm.resources[0].data.get('cabundle', '')
+        ) if (ca_cm.resources | length > 0 and ca_cm.resources[0].data) else ''
+      }}
+  when: ca_cm.resources | length > 0
+
+- name: Write cluster CA to file
+  ansible.builtin.copy:
+    content: "{{ ca_content }}"
+    dest: "{{ output_path }}"
+    mode: "0644"
+  when: ca_content is defined and ca_content != ''
+
+- name: Stat CA output
+  ansible.builtin.stat:
+    path: "{{ output_path }}"
+  register: s3_ssl_ca_out_stat
+
+- name: Fail when CA file missing or too small
+  ansible.builtin.fail:
+    msg: >-
+      No usable PEM at {{ output_path }} (cluster={{ cluster_name | default('unknown') }}).
+      Source: ConfigMap {{ ca_bundle_name | default('vp-pattern-proxy-ca-bundle') }}
+      in {{ ca_bundle_namespace | default('openshift-config') }}
+      (key {{ ca_bundle_key | default('ca-bundle.crt') }}).
+      Is vp-manage-proxy-cluster-ca installed and reconciled?
+  when: >-
+    not s3_ssl_ca_out_stat.stat.exists | default(false)
+    or (s3_ssl_ca_out_stat.stat.size | default(0) | int) < 64

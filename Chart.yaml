@@ -1,6 +1,12 @@
 apiVersion: v2
-description: A Helm chart to serve as the Validated Patterns Template
+description: >
+  ACM/OCM policy chart for Submariner, s3-ssl CA sync, and Ramen s3StoreProfiles CA
+  injection (from vp-manage-proxy-cluster-ca) supporting Regional Disaster Recovery.
 keywords:
   - pattern
+  - submariner
+  - s3
+  - ramen
+  - regionaldr
 name: opp-policy-chart
-version: 0.0.2
+version: 0.0.5

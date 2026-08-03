@@ -1,0 +1,11 @@
+{{- if ((.Values.clusterCaMgt | default dict).createNamespace) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ssl-certificate-management
+    app.kubernetes.io/component: ca-workloads
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+{{- end }}

@@ -1,24 +1,8 @@
-# Ansible playbooks (scripts rewrite)
+# Ansible playbooks for opp-policy-chart
 
-These playbooks replace the bash scripts in `../` and are intended to run inside the **quay.io/validatedpatterns/utility-container:latest** image with the **kubernetes.core** collection available.
+- **s3-ssl-certificate-sync.yml** – Wait for ManagedClusters, read CA from vp-manage-proxy-cluster-ca
+  (`vp-pattern-proxy-ca-bundle` by default), ensure Proxy.trustedCA on hub/spokes, restart Ramen pods.
+  Profile `caCertificates` injection is owned by vp-ramen-s3-ca-injector-chart.
+- **s3-ssl-precheck.yml** – Verify hub vp-proxy CA ConfigMap and Proxy.trustedCA.
 
-- **odf-ssl-certificate-extraction.yml** – Extract CAs from hub and managed clusters, build combined bundle, update hub/managed `cluster-proxy-ca-bundle` / Proxy, restart ramenddr/Velero pods. Ramen hub `caCertificates` are owned by regional DR charts, not this playbook.
-- **odf-ssl-precheck.yml** – Wait for clusters, verify certificate distribution on hub; cleanup placeholders; if incomplete, instruct to run/sync the extraction Job.
-
-Kubeconfig retrieval uses the same method as the original scripts: from the hub, list secrets in the managed cluster namespace, use `admin-kubeconfig` or `kubeconfig` secret, then `.data.kubeconfig` or `.data.raw-kubeconfig`; write to `/tmp/<cluster>-kubeconfig.yaml`.
-
-## Install collection
-
-```bash
-ansible-galaxy collection install -r requirements.yml
-```
-
-## Run locally (against hub)
-
-```bash
-export KUBECONFIG=/path/to/hub/kubeconfig
-export PRIMARY_CLUSTER=ocp-primary
-export SECONDARY_CLUSTER=ocp-secondary
-
-ansible-playbook -i localhost, -c local odf-ssl-certificate-extraction.yml
-```
+Shared tasks: `kubeconfig.yml`, `wait-dr-managedclusters-available.yml`, `s3-ssl-read-ca.yml`.

@@ -1,19 +1,21 @@
+{{- if eq "1" (include "opp.s3SslEnabled" . | trim) }}
 apiVersion: policy.open-cluster-management.io/v1
 kind: PlacementBinding
 metadata:
-  labels:
-    app.kubernetes.io/name: placement-binding-hub
-    app.kubernetes.io/component: placement-binding
-  name: binding-openshift-plus-hub
+  name: binding-s3-ssl-certificates
   namespace: open-cluster-management
+  labels:
+    app.kubernetes.io/name: s3-ssl-certificate-management
+    app.kubernetes.io/component: placement-binding
   annotations:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
-    argocd.argoproj.io/sync-wave: "2"
+    argocd.argoproj.io/sync-wave: "4"
 placementRef:
-  name: placement-openshift-plus-hub
+  name: placement-s3-ssl-certificates
   kind: PlacementRule
   apiGroup: apps.open-cluster-management.io
 subjects:
-- name: policy-ocm-observability
+- name: policy-s3-ssl-managed-cluster
   kind: Policy
   apiGroup: policy.open-cluster-management.io
+{{- end }}

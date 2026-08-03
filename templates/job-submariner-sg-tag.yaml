@@ -1,0 +1,44 @@
+{{- if eq "1" (include "opp.submarinerSgTagJobEnabled" . | trim) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: submariner-sg-tagger
+  namespace: open-cluster-management
+  labels:
+    app.kubernetes.io/name: submariner-sg-tag
+    app.kubernetes.io/component: aws-tagging
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      annotations:
+        {{- include "opp.ansibleJobPodAnnotations" . | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: sg-tagger
+        image: {{ $.Values.ansible.containerImage }}
+        env:
+        - name: AWS_SDK_LOAD_CONFIG
+          value: "false"
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        command:
+        - /bin/bash
+        - -c
+        - |
+{{ include "opp.ansibleBootstrap" . | indent 10 }}
+            ansible-playbook -i inventory/hosts playbooks/submariner_sg_tag.yml
+        volumeMounts:
+        - name: ansible
+          mountPath: /ansible-cm
+          readOnly: true
+      volumes:
+      - name: ansible
+        configMap:
+          name: opp-policy-ansible
+      serviceAccountName: submariner-sg-tagger
+{{- end }}

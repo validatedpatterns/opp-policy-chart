@@ -1,0 +1,172 @@
+---
+# s3-ssl: verify/distribute CA material sourced from vp-manage-proxy-cluster-ca.
+# Does not extract ingress/API CAs — vp-proxy owns that. This playbook waits for
+# ManagedClusters, reads the vp-proxy ConfigMap on the hub, ensures Proxy.trustedCA
+# points at it, verifies (or backfills) the same on spokes, and restarts Ramen/Velero pods.
+# Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_NAME, CA_BUNDLE_NAMESPACE, CA_BUNDLE_KEY
+- name: S3 SSL CA sync from vp-proxy
+  hosts: localhost
+  gather_facts: true
+  vars:
+    work_dir: "/tmp/s3-ssl-certs"
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    ca_bundle_name: "{{ lookup('env', 'CA_BUNDLE_NAME') | default('vp-pattern-proxy-ca-bundle', true) }}"
+    ca_bundle_namespace: "{{ lookup('env', 'CA_BUNDLE_NAMESPACE') | default('openshift-config', true) }}"
+    ca_bundle_key: "{{ lookup('env', 'CA_BUNDLE_KEY') | default('ca-bundle.crt', true) }}"
+    kubeconfig: "{{ lookup('env', 'KUBECONFIG') | default('', true) | trim }}"
+    cluster_readiness_max_attempts: "{{ lookup('env', 'CLUSTER_READINESS_MAX_ATTEMPTS') | default(150, true) | int }}"
+    cluster_readiness_sleep: "{{ lookup('env', 'CLUSTER_READINESS_SLEEP_SECONDS') | default(30, true) | int }}"
+  tasks:
+    - name: Log job context
+      ansible.builtin.debug:
+        msg:
+          - "s3-ssl sync starting (source=vp-manage-proxy-cluster-ca)"
+          - "ca_bundle={{ ca_bundle_namespace }}/{{ ca_bundle_name }} key={{ ca_bundle_key }}"
+          - "primary={{ primary_cluster }} secondary={{ secondary_cluster }}"
+
+    - name: Create work directory
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Wait for both managed clusters to be Available
+      ansible.builtin.include_tasks: tasks/wait-dr-managedclusters-available.yml
+
+    - name: Read hub vp-proxy CA ConfigMap
+      ansible.builtin.include_tasks: tasks/s3-ssl-read-ca.yml
+      vars:
+        cluster_name: hub
+        output_path: "{{ work_dir }}/combined-ca-bundle.crt"
+        kubeconfig_path: ""
+
+    - name: Ensure hub Proxy.trustedCA references vp-proxy ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: config.openshift.io/v1
+          kind: Proxy
+          metadata:
+            name: cluster
+          spec:
+            trustedCA:
+              name: "{{ ca_bundle_name }}"
+
+    - name: Get managed clusters
+      kubernetes.core.k8s_info:
+        api_version: cluster.open-cluster-management.io/v1
+        kind: ManagedCluster
+      register: managed_clusters_result
+
+    - name: Set managed clusters list (exclude local-cluster)
+      ansible.builtin.set_fact:
+        _mc_names: >-
+          {{
+            managed_clusters_result.resources | default([])
+            | map(attribute='metadata.name')
+            | reject('equalto', 'local-cluster')
+            | list
+          }}
+
+    - name: Require PRIMARY_CLUSTER and SECONDARY_CLUSTER match ManagedCluster names
+      ansible.builtin.fail:
+        msg: >-
+          PRIMARY_CLUSTER={{ primary_cluster }} and SECONDARY_CLUSTER={{ secondary_cluster }} must each match an ACM
+          ManagedCluster (excl. local-cluster). Discovered: {{ _mc_names | join(', ') | default('none', true) }}.
+      when: >-
+        (primary_cluster not in _mc_names)
+        or (secondary_cluster not in _mc_names)
+
+    - name: Set managed clusters list
+      ansible.builtin.set_fact:
+        managed_clusters: "{{ _mc_names | sort }}"
+
+    - name: Download kubeconfig for managed cluster
+      ansible.builtin.include_tasks: tasks/kubeconfig-attempt.yml
+      loop: "{{ managed_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        cluster: "{{ item }}"
+        kubeconfig_path: "{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        check_available: false
+
+    - name: Verify or backfill vp-proxy CA on each managed cluster
+      ansible.builtin.shell: |
+        set -euo pipefail
+        K="{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        CM="{{ ca_bundle_name }}"
+        NS="{{ ca_bundle_namespace }}"
+        KEY="{{ ca_bundle_key }}"
+        SRC="{{ work_dir }}/combined-ca-bundle.crt"
+        echo "=== s3-ssl: verify/backfill ${NS}/${CM} on {{ item }} ==="
+        for attempt in 1 2 3; do
+          if oc --kubeconfig="$K" get configmap "$CM" -n "$NS" &>/dev/null; then
+            sz=$(oc --kubeconfig="$K" get configmap "$CM" -n "$NS" -o "jsonpath={.data.${KEY//./\\.}}" 2>/dev/null | wc -c | tr -d ' ')
+            if [[ "${sz:-0}" -ge 64 ]]; then
+              oc --kubeconfig="$K" patch proxy/cluster --type=merge \
+                --patch="{\"spec\":{\"trustedCA\":{\"name\":\"${CM}\"}}}" || true
+              echo "  present (${sz} bytes); Proxy.trustedCA=${CM}"
+              exit 0
+            fi
+          fi
+          echo "  missing/empty (attempt ${attempt}); applying hub CA material"
+          if oc --kubeconfig="$K" create configmap "$CM" -n "$NS" --from-file="${KEY}=${SRC}" --dry-run=client -o yaml \
+            | oc --kubeconfig="$K" apply -f - \
+            && oc --kubeconfig="$K" patch proxy/cluster --type=merge \
+              --patch="{\"spec\":{\"trustedCA\":{\"name\":\"${CM}\"}}}"
+          then
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "FAILED to ensure ${NS}/${CM} on {{ item }}" >&2
+        exit 1
+      args:
+        executable: /bin/bash
+      loop: "{{ managed_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      register: spoke_ca_sync
+      changed_when: true
+
+    - name: Restart Ramen operator pods so they pick up updated trust
+      ansible.builtin.shell: |
+        set -euo pipefail
+        restart_ns() {
+          local kube="$1" label="$2" ns pods
+          for ns in openshift-operators openshift-dr-system; do
+            if [[ -n "$kube" ]]; then
+              pods=$(oc --kubeconfig="$kube" get pods -n "$ns" -l "$label" -o name 2>/dev/null || true)
+              if [[ -n "$pods" ]]; then
+                echo "Deleting $label pods in $ns (kubeconfig=$kube)"
+                # shellcheck disable=SC2086
+                oc --kubeconfig="$kube" delete -n "$ns" $pods --ignore-not-found=true || true
+              fi
+            else
+              pods=$(oc get pods -n "$ns" -l "$label" -o name 2>/dev/null || true)
+              if [[ -n "$pods" ]]; then
+                echo "Deleting $label pods in $ns (hub)"
+                # shellcheck disable=SC2086
+                oc delete -n "$ns" $pods --ignore-not-found=true || true
+              fi
+            fi
+          done
+        }
+        echo "=== hub ramen restart ==="
+        restart_ns "" "app=ramen-hub-operator"
+        restart_ns "" "app=ramen-dr-cluster-operator"
+        {% for c in managed_clusters %}
+        echo "=== {{ c }} ramen restart ==="
+        restart_ns "{{ work_dir }}/{{ c }}-kubeconfig.yaml" "app=ramen-dr-cluster-operator"
+        restart_ns "{{ work_dir }}/{{ c }}-kubeconfig.yaml" "app=ramen-hub-operator"
+        {% endfor %}
+      args:
+        executable: /bin/bash
+      changed_when: true
+      failed_when: false
+
+    - name: s3-ssl sync complete
+      ansible.builtin.debug:
+        msg: "vp-proxy CA verified/distributed; Proxy.trustedCA={{ ca_bundle_name }}; Ramen pods restart attempted"
