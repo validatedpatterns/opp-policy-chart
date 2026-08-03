@@ -45,10 +45,11 @@ s3Ssl:
   caBundle:
     # -- Namespace of the vp-proxy trust ConfigMap (vp-manage-proxy-cluster-ca targetNamespace).
     namespace: openshift-config
-    # -- ConfigMap name (vp-manage-proxy-cluster-ca configMapName).
-    name: vp-pattern-proxy-ca-bundle
-    # -- Data key holding PEM.
-    key: ca-bundle.crt
+    # -- Prefer the differential Bundle (API/ingress CAs from hub+spokes), not the full
+    # Proxy trustedCA ConfigMap (which includes the platform system trust store).
+    name: vp-pattern-proxy-ca-bundle-differential
+    # -- Data key holding PEM (differentialBundle.targetKey; must not contain '.').
+    key: cabundle
 
 # Inject caCertificates into Ramen s3StoreProfiles from s3Ssl.caBundle (vp-proxy).
 # Hub Job reads the CA once, patches hub Ramen, then optionally spokes via ACM kubeconfigs.

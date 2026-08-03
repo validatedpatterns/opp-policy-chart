@@ -117,19 +117,31 @@ wait_for_ramen_profiles() {
 patch_profiles() {
 	local f="$WORK_DIR/ramen_manager_config.yaml"
 	local out="$WORK_DIR/ramen_manager_config.patched.yaml"
+	local ca_b64="$WORK_DIR/ca-bundle.b64"
 	cp "$f" "$out"
 
-	CA_BUNDLE_BASE64=$(base64 -w 0 <"$WORK_DIR/ca-bundle.crt" 2>/dev/null || base64 <"$WORK_DIR/ca-bundle.crt" | tr -d '\n')
-	export CA_BUNDLE_BASE64
+	# Never export the CA as an env var — large bundles exceed ARG_MAX and break yq/strenv.
+	(base64 -w 0 <"$WORK_DIR/ca-bundle.crt" 2>/dev/null || base64 <"$WORK_DIR/ca-bundle.crt" | tr -d '\n') >"$ca_b64"
+	[[ -s "$ca_b64" ]] || die "failed to base64-encode CA bundle"
 
 	local patched=false
-	if yq eval -i '.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "$out" 2>/dev/null; then
+	local top_len kop_len
+	top_len=$(yq eval '(.s3StoreProfiles // []) | length' "$out" 2>/dev/null | tr -d ' \n\r' || echo 0)
+	kop_len=$(yq eval '(.kubeObjectProtection.s3StoreProfiles // []) | length' "$out" 2>/dev/null | tr -d ' \n\r' || echo 0)
+	[[ "$top_len" =~ ^[0-9]+$ ]] || top_len=0
+	[[ "$kop_len" =~ ^[0-9]+$ ]] || kop_len=0
+
+	if [[ "$top_len" -gt 0 ]]; then
+		yq eval -i ".s3StoreProfiles[] |= . + {\"caCertificates\": load_str(\"${ca_b64}\")}" "$out" \
+			|| die "yq failed patching top-level s3StoreProfiles"
 		patched=true
 	fi
-	if yq eval -i '.kubeObjectProtection.s3StoreProfiles[]? |= . + {"caCertificates": strenv(CA_BUNDLE_BASE64)}' "$out" 2>/dev/null; then
+	if [[ "$kop_len" -gt 0 ]]; then
+		yq eval -i ".kubeObjectProtection.s3StoreProfiles[] |= . + {\"caCertificates\": load_str(\"${ca_b64}\")}" "$out" \
+			|| die "yq failed patching kubeObjectProtection.s3StoreProfiles"
 		patched=true
 	fi
-	[[ "$patched" == "true" ]] || die "yq could not patch s3StoreProfiles"
+	[[ "$patched" == "true" ]] || die "no s3StoreProfiles arrays to patch (top=${top_len} kop=${kop_len})"
 	grep -q 'caCertificates' "$out" || die "patched YAML has no caCertificates"
 
 	# Preserve existing metadata; replace only the RamenConfig data key.
@@ -138,8 +150,8 @@ patch_profiles() {
 	# Strip volatile fields that confuse apply.
 	yq eval -i 'del(.metadata.resourceVersion, .metadata.uid, .metadata.creationTimestamp, .metadata.generation, .metadata.managedFields, .status)' \
 		"$WORK_DIR/ramen-cm-live.yaml"
-	export RAMEN_CONFIG_KEY
-	yq eval -i '.data[strenv(RAMEN_CONFIG_KEY)] = load_str("'"$out"'")' "$WORK_DIR/ramen-cm-live.yaml" \
+	# Prefer quoted key form; avoid strenv for the large YAML payload.
+	yq eval -i ".data.\"${RAMEN_CONFIG_KEY}\" = load_str(\"${out}\")" "$WORK_DIR/ramen-cm-live.yaml" \
 		|| die "failed to set ${RAMEN_CONFIG_KEY} on ConfigMap manifest"
 
 	oc apply -f "$WORK_DIR/ramen-cm-live.yaml" || die "oc apply failed for ${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP}"

@@ -7,11 +7,11 @@ ACM/OCM policy chart for Submariner, s3-ssl CA sync, and Ramen s3StoreProfiles C
 Always deployed with **regionaldr-with-virt** (Ramen DR / virt workloads). This chart adds Submariner, s3-ssl CA sync, and Ramen `s3StoreProfiles` CA injection (sourced from **vp-manage-proxy-cluster-ca**) on the hub, with optional distribution to ManagedClusters.
 Also pair with **odf-dr-chart** (MirrorPeer / ODF).
 
-Hub Jobs read the vp-proxy CA once, patch `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) use ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes — same pattern as s3-ssl. Set `distributeToManagedClusters: false` for hub-only.
+Hub Jobs read the vp-proxy **differential** CA once (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only, not the full Proxy system trust store), patch `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) use ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes — same pattern as s3-ssl. Set `distributeToManagedClusters: false` for hub-only.
 
 ## Notable changes
 
-v0.0.5 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector
+v0.0.5 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector; default CA source is the vp-proxy differential bundle (cluster API/ingress CAs)
 
 v0.0.4 - Add Submariner and s3-ssl (from odf-dr); s3-ssl sources CA from vp-proxy ConfigMap
 
@@ -59,8 +59,8 @@ v0.0.1 - Initial release
 | s3CaInjector.ramen.managedConfigMapName | string | `"ramen-dr-cluster-operator-config"` | Managed-cluster Ramen ConfigMap name. |
 | s3CaInjector.ramen.minProfiles | int | `1` | Minimum s3StoreProfiles before patching. |
 | s3CaInjector.ramen.namespace | string | `"openshift-operators"` | Namespace of hub and managed Ramen operator ConfigMaps. |
-| s3Ssl.caBundle.key | string | `"ca-bundle.crt"` | Data key holding PEM. |
-| s3Ssl.caBundle.name | string | `"vp-pattern-proxy-ca-bundle"` | ConfigMap name (vp-manage-proxy-cluster-ca configMapName). |
+| s3Ssl.caBundle.key | string | `"cabundle"` | Data key holding PEM (differentialBundle.targetKey; must not contain '.'). |
+| s3Ssl.caBundle.name | string | `"vp-pattern-proxy-ca-bundle-differential"` | Prefer the differential Bundle (API/ingress CAs from hub+spokes), not the full Proxy trustedCA ConfigMap (which includes the platform system trust store). |
 | s3Ssl.caBundle.namespace | string | `"openshift-config"` | Namespace of the vp-proxy trust ConfigMap (vp-manage-proxy-cluster-ca targetNamespace). |
 | s3Ssl.clusterReadinessMaxAttempts | int | `150` | Maximum ManagedCluster readiness poll attempts before sync Job fails. |
 | s3Ssl.clusterReadinessSleepSeconds | int | `30` | Seconds between ManagedCluster readiness polls. |

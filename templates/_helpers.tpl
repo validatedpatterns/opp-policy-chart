@@ -53,7 +53,7 @@
 {{- define "opp.s3SslCaBundleName" -}}
 {{- $cfg := .Values.s3Ssl | default dict -}}
 {{- $ca := $cfg.caBundle | default dict -}}
-{{- $ca.name | default "vp-pattern-proxy-ca-bundle" -}}
+{{- $ca.name | default "vp-pattern-proxy-ca-bundle-differential" -}}
 {{- end -}}
 
 {{- define "opp.s3SslCaBundleNamespace" -}}
@@ -65,7 +65,7 @@
 {{- define "opp.s3SslCaBundleKey" -}}
 {{- $cfg := .Values.s3Ssl | default dict -}}
 {{- $ca := $cfg.caBundle | default dict -}}
-{{- $ca.key | default "ca-bundle.crt" -}}
+{{- $ca.key | default "cabundle" -}}
 {{- end -}}
 
 {{/* Stable checksum of packaged ansible/ (excludes dotfiles). */}}
