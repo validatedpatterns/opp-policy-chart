@@ -79,7 +79,7 @@ s3CaInjector:
     # -- Key inside the Ramen ConfigMap that holds RamenConfig YAML.
     configKey: ramen_manager_config.yaml
     # -- Minimum s3StoreProfiles before patching.
-    minProfiles: 1
+    minProfiles: 2
     # -- When true, fail the one-shot Job if profiles never appear. CronJob soft-exits.
     failIfNoProfiles: true
   job:
