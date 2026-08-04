@@ -35,12 +35,19 @@
 {{- if eq "aws" (lower ($g.clusterPlatform | default "AWS" | toString)) -}}1{{- else -}}0{{- end -}}
 {{- end -}}
 
-{{/* Submariner EC2 SG tagger: AWS platform and submariner.sgTagJobEnabled true. */}}
+{{/* Submariner Broker/add-ons/prereq Jobs. Default on. */}}
+{{- define "opp.submarinerEnabled" -}}
+{{- $cfg := .Values.submariner | default dict -}}
+{{- if not (hasKey $cfg "enabled") -}}1{{- else if index $cfg "enabled" -}}1{{- else -}}0{{- end -}}
+{{- end -}}
+
+{{/* Submariner EC2 SG tagger: submariner.enabled, AWS platform, and sgTagJobEnabled. */}}
 {{- define "opp.submarinerSgTagJobEnabled" -}}
 {{- $sm := .Values.submariner | default dict -}}
+{{- $enabled := eq "1" (include "opp.submarinerEnabled" . | trim) -}}
 {{- $aws := eq "1" (include "opp.clusterPlatformAws" . | trim) -}}
 {{- $want := and (hasKey $sm "sgTagJobEnabled") (index $sm "sgTagJobEnabled") -}}
-{{- if and $aws $want -}}1{{- else -}}0{{- end -}}
+{{- if and $enabled $aws $want -}}1{{- else -}}0{{- end -}}
 {{- end -}}
 
 {{/* s3-ssl jobs/policies: sync/verify CA from vp-manage-proxy-cluster-ca. Default on. */}}

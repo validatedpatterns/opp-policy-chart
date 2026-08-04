@@ -1,3 +1,4 @@
+{{- if eq "1" (include "opp.submarinerEnabled" . | trim) }}
 {{- $dr := index .Values.regionalDR 0 }}
 {{- $clusterSet := $dr.name }}
 {{- $globalnetEnabled := $dr.globalnetEnabled }}
@@ -63,4 +64,5 @@ spec:
     name: {{ $cluster.name }}-cluster-aws-creds
 {{- end }}
 
+{{- end }}
 {{- end }}

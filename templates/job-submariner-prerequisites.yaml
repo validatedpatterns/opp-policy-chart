@@ -1,3 +1,4 @@
+{{- if eq "1" (include "opp.submarinerEnabled" . | trim) }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -49,3 +50,4 @@ spec:
         configMap:
           name: opp-policy-ansible
       serviceAccountName: submariner-prerequisites-checker
+{{- end }}

@@ -23,6 +23,8 @@ regionalDR:
         name: ocp-secondary
 
 submariner:
+  # -- When false, skip Submariner Broker, ManagedClusterAddOn, SubmarinerConfig, and related Jobs/RBAC.
+  enabled: true
   # -- EC2 instance type for Submariner gateway nodes.
   instanceType: m5.xlarge
   # -- IPsec NAT-T UDP port used by Submariner.
@@ -31,7 +33,7 @@ submariner:
   NATTEnable: true
   # -- Submariner cable driver (vxlan or libreswan).
   cableDriver: vxlan
-  # -- Enable EC2 security group tagging job. AWS only.
+  # -- Enable EC2 security group tagging job. AWS only; also requires submariner.enabled.
   sgTagJobEnabled: false
 
 # s3-ssl: sync/verify Proxy trustedCA material from vp-manage-proxy-cluster-ca onto all clusters.
