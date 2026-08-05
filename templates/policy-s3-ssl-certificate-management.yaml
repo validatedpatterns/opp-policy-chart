@@ -1,0 +1,47 @@
+{{- if eq "1" (include "opp.s3SslEnabled" . | trim) }}
+apiVersion: policy.open-cluster-management.io/v1
+kind: Policy
+metadata:
+  annotations:
+    policy.open-cluster-management.io/categories: CA Assessment Authorization and
+      Monitoring
+    policy.open-cluster-management.io/controls: CA-7 Continuous Monitoring
+    policy.open-cluster-management.io/standards: NIST SP 800-53
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Prune=false
+    argocd.argoproj.io/health-check-ignore: "true"
+    argocd.argoproj.io/hook: "PostSync"
+    argocd.argoproj.io/sync-wave: "3"
+  labels:
+    app.kubernetes.io/name: s3-ssl-certificate-management
+    app.kubernetes.io/component: policy
+  name: policy-s3-ssl-certificate-management
+  namespace: open-cluster-management
+spec:
+  disabled: false
+  policy-templates:
+  - objectDefinition:
+      apiVersion: policy.open-cluster-management.io/v1
+      kind: ConfigurationPolicy
+      metadata:
+        name: policy-s3-ssl-certificate-management
+        annotations:
+          argocd.argoproj.io/compare-options: IgnoreExtraneous
+      spec:
+        object-templates:
+        # Do not enforce the ConfigMap body here — that would wipe PEM written by vp-proxy / s3-ssl sync.
+        - complianceType: musthave
+          objectDefinition:
+            apiVersion: config.openshift.io/v1
+            kind: Proxy
+            metadata:
+              name: cluster
+              labels:
+                app.kubernetes.io/name: s3-ssl-certificate-management
+                app.kubernetes.io/component: proxy-config
+            spec:
+              trustedCA:
+                name: {{ include "opp.s3SslCaBundleName" . }}
+        remediationAction: enforce
+        severity: high
+{{- end }}

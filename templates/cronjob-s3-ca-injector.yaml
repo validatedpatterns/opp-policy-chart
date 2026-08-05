@@ -1,0 +1,81 @@
+{{- if and (eq "1" (include "opp.s3CaInjectorEnabled" . | trim)) (((.Values.s3CaInjector | default dict).cronJob | default dict).enabled | default true) }}
+{{- $job := ((.Values.s3CaInjector | default dict).job | default dict) -}}
+{{- $cj := ((.Values.s3CaInjector | default dict).cronJob | default dict) -}}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: s3-ca-injector
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: {{ ($cj.argoCDSyncWave | default "10") | quote }}
+    checksum/script: {{ .Files.Get "scripts/inject-ramen-s3-ca.sh" | sha256sum }}
+    checksum/playbook: {{ .Files.Get "scripts/ansible/s3-ca-injector.yml" | sha256sum }}
+spec:
+  suspend: {{ $cj.suspend | default false }}
+  schedule: {{ ($cj.schedule | default "*/15 * * * *") | quote }}
+  concurrencyPolicy: {{ $cj.concurrencyPolicy | default "Forbid" }}
+  successfulJobsHistoryLimit: {{ $cj.successfulJobsHistoryLimit | default 3 }}
+  failedJobsHistoryLimit: {{ $cj.failedJobsHistoryLimit | default 3 }}
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: s3-ca-injector
+            app.kubernetes.io/component: ramen-s3-ca
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: s3-ca-injector
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: inject
+            image: {{ $.Values.ansible.containerImage }}
+            workingDir: /playbooks
+            imagePullPolicy: IfNotPresent
+            securityContext:
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                  - ALL
+              runAsNonRoot: true
+              seccompProfile:
+                type: RuntimeDefault
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "768Mi"
+                cpu: "500m"
+            env:
+              {{- include "opp.s3CaInjector.commonEnv" . | nindent 14 }}
+              - name: POLL_INTERVAL
+                value: {{ ($job.pollInterval | default 15) | quote }}
+              - name: CA_WAIT_SECONDS
+                value: "300"
+              - name: RAMEN_WAIT_SECONDS
+                value: "120"
+              - name: ALLOW_MISSING_PROFILES
+                value: "true"
+            command:
+            - ansible-playbook
+            args:
+            - -i
+            - localhost,
+            - -c
+            - local
+            - -v
+            - /playbooks/s3-ca-injector.yml
+            volumeMounts:
+              {{- include "opp.s3CaInjector.volumeMounts" . | nindent 14 }}
+          volumes:
+            {{- include "opp.s3CaInjector.volumes" . | nindent 12 }}
+{{- end }}

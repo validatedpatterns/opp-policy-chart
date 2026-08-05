@@ -1,25 +1,124 @@
 ---
-# Namespace for ODF SSL extraction/precheck Jobs, playbooks, and RBAC.
-# cluster-proxy-ca-bundle remains in openshift-config (Proxy.spec.trustedCA requirement).
+# Namespace for s3-ssl / s3-ca-injector Jobs and RBAC (not the Proxy CA ConfigMap itself).
 clusterCaMgt:
-  # -- Namespace for ODF SSL certificate extraction and precheck workloads.
+  # -- Namespace for s3-ssl and s3-ca-injector workloads.
   namespace: cluster-ca-mgt
   # -- Create clusterCaMgt.namespace when installing the chart.
   createNamespace: false
 
-# DR pair cluster names - same structure as rdr chart (regionalDR).
-# Override via values-hub or overrides so opp-policy and rdr use the same names.
-# These MUST match ACM ManagedCluster metadata.name (e.g. mjrtd420-1); otherwise kubeconfig/CA paths and
-# cluster-proxy-ca-bundle distribution target the wrong cluster names and spokes stay without a bundle.
+global:
+  # -- Cloud platform type. AWS enables Submariner gateway/credentials and SG-tag job.
+  clusterPlatform: AWS
+
+# DR pair cluster names - same structure as regionaldr-with-virt.
 regionalDR:
-  - name: resilient
+  - # -- Name of this DR pair set (also Submariner broker ClusterSet name).
+    name: resilient
+    # -- Enable Submariner Globalnet when primary/secondary CIDRs overlap.
+    globalnetEnabled: false
     clusters:
       primary:
         name: ocp-primary
       secondary:
         name: ocp-secondary
 
-# odf-ssl-certificate-extractor Job: wait for both DR ManagedClusters (ManagedClusterConditionAvailable=True) before extraction.
-odfSslCertificateExtractor:
+submariner:
+  # -- When false, skip Submariner Broker, ManagedClusterAddOn, SubmarinerConfig, and related Jobs/RBAC.
+  enabled: true
+  # -- EC2 instance type for Submariner gateway nodes.
+  instanceType: m5.xlarge
+  # -- IPsec NAT-T UDP port used by Submariner.
+  ipsecNatPort: 4500
+  # -- Enable NAT traversal (NAT-T) for Submariner IPsec tunnels.
+  NATTEnable: true
+  # -- Submariner cable driver (vxlan or libreswan).
+  cableDriver: vxlan
+  # -- Enable EC2 security group tagging job. AWS only; also requires submariner.enabled.
+  sgTagJobEnabled: false
+
+# s3-ssl: sync/verify Proxy trustedCA material from vp-manage-proxy-cluster-ca onto all clusters.
+# Must use the FULL Proxy bundle (useDefaultCAs + exports). Never point this at the differential Bundle.
+s3Ssl:
+  # -- When false, skip s3-ssl Jobs, playbook ConfigMaps, and ACM CA policies.
+  enabled: true
+  # -- Maximum ManagedCluster readiness poll attempts before sync Job fails.
   clusterReadinessMaxAttempts: 150
+  # -- Seconds between ManagedCluster readiness polls.
   clusterReadinessSleepSeconds: 30
+  caBundle:
+    # -- Namespace of the vp-proxy trust ConfigMap (vp-manage-proxy-cluster-ca targetNamespace).
+    namespace: openshift-config
+    # -- Full Proxy trustedCA ConfigMap (vp-manage-proxy-cluster-ca configMapName). Not the differential Bundle.
+    name: vp-pattern-proxy-ca-bundle
+    # -- Data key holding PEM for Proxy trustedCA (usually ca-bundle.crt).
+    key: ca-bundle.crt
+
+# Inject caCertificates into Ramen s3StoreProfiles from the vp-proxy differential CA Bundle.
+# Hub Job reads the CA once, patches hub Ramen, then optionally spokes via ACM kubeconfigs.
+s3CaInjector:
+  # -- When false, skip the Ramen s3StoreProfiles CA injector Job/CronJob.
+  enabled: true
+  # -- When false, patch hub Ramen only (skip ManagedCluster kubeconfigs / spoke inject).
+  distributeToManagedClusters: true
+  # -- Maximum ManagedCluster readiness poll attempts before injector fails (spoke path).
+  clusterReadinessMaxAttempts: 150
+  # -- Seconds between ManagedCluster readiness polls.
+  clusterReadinessSleepSeconds: 30
+  caBundle:
+    # -- Namespace of the differential CA ConfigMap (same targetNamespace as vp-proxy).
+    namespace: openshift-config
+    # -- Differential Bundle only (API/ingress CAs). Do not use the full Proxy system trust store here.
+    name: vp-pattern-proxy-ca-bundle-differential
+    # -- Data key holding PEM (differentialBundle.targetKey; must not contain '.').
+    key: cabundle
+  ramen:
+    # -- Namespace of hub and managed Ramen operator ConfigMaps.
+    namespace: openshift-operators
+    # -- Hub Ramen ConfigMap name.
+    hubConfigMapName: ramen-hub-operator-config
+    # -- Managed-cluster Ramen ConfigMap name.
+    managedConfigMapName: ramen-dr-cluster-operator-config
+    # -- Key inside the Ramen ConfigMap that holds RamenConfig YAML.
+    configKey: ramen_manager_config.yaml
+    # -- Minimum s3StoreProfiles before patching.
+    minProfiles: 2
+    # -- When true, fail the one-shot Job if profiles never appear. CronJob soft-exits.
+    failIfNoProfiles: true
+  job:
+    # -- Render a one-shot PostSync Job.
+    enabled: true
+    # -- Argo CD sync-wave for the Job.
+    argoCDSyncWave: "10"
+    # -- Seconds to wait for the vp-proxy CA ConfigMap (fallback if CA_FILE unused).
+    caWaitSeconds: 3600
+    # -- Seconds to wait for Ramen s3StoreProfiles.
+    ramenWaitSeconds: 3600
+    # -- Poll interval while waiting.
+    pollInterval: 15
+    # -- Job backoffLimit.
+    backoffLimit: 5
+    # -- Job activeDeadlineSeconds.
+    activeDeadlineSeconds: 14400
+  cronJob:
+    # -- Render a CronJob that re-injects after MCO wipes caCertificates.
+    enabled: true
+    # -- Cron schedule (UTC).
+    schedule: "*/15 * * * *"
+    # -- Suspend the CronJob without deleting it.
+    suspend: false
+    # -- CronJob concurrencyPolicy.
+    concurrencyPolicy: Forbid
+    # -- successfulJobsHistoryLimit.
+    successfulJobsHistoryLimit: 3
+    # -- failedJobsHistoryLimit.
+    failedJobsHistoryLimit: 3
+    # -- Argo CD sync-wave for the CronJob.
+    argoCDSyncWave: "10"
+
+ansible:
+  # -- Container image used for Ansible post-install jobs.
+  containerImage: quay.io/validatedpatterns/utility-container:latest
+  # -- Ansible-playbook verbosity level (0–4).
+  verbosity: 0
+  # -- Argo CD resource sync-options applied to the Ansible ConfigMap.
+  configMapArgoSyncOptions: Prune=false,ServerSideApply=true

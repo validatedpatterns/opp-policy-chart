@@ -1,0 +1,39 @@
+---
+- name: Run Submariner prerequisites check
+  ansible.builtin.command:
+    argv:
+      - bash
+      - "{{ role_path }}/files/submariner-prerequisites-check.sh"
+  environment:
+    PRIMARY_CLUSTER: "{{ primary_cluster }}"
+    SECONDARY_CLUSTER: "{{ secondary_cluster }}"
+    SUBMARINER_BROKER_NAMESPACE: "{{ submariner_broker_namespace }}"
+  register: submariner_prerequisites_result
+  changed_when: false
+  failed_when: false
+
+- name: Promote Submariner prerequisites script failure to Ansible output
+  ansible.builtin.debug:
+    msg: |-
+      Submariner prerequisites script exited with rc={{ submariner_prerequisites_result.rc }}.
+      ========== stderr ==========
+      {{ submariner_prerequisites_result.stderr | default('', true) }}
+      ========== stdout (full) ==========
+      {{ submariner_prerequisites_result.stdout | default('', true) }}
+  when: submariner_prerequisites_result.rc != 0
+
+- name: Fail play when Submariner prerequisites script failed
+  ansible.builtin.fail:
+    msg: >-
+      Submariner prerequisites script exited with rc={{ submariner_prerequisites_result.rc }}.
+      Full stdout/stderr were printed in the previous debug task.
+  when: submariner_prerequisites_result.rc != 0
+
+- name: Promote recent Submariner output after long retry run (tail of stdout)
+  ansible.builtin.debug:
+    msg: |-
+      Submariner prerequisites succeeded (rc=0); last 8000 characters of script output:
+      {{ (submariner_prerequisites_result.stdout | default(''))[-8000:] }}
+  when:
+    - submariner_prerequisites_result.rc == 0
+    - (submariner_prerequisites_result.stdout | default('') | length) > 6000

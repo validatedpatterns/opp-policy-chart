@@ -1,0 +1,73 @@
+---
+# s3-ssl precheck: verify vp-manage-proxy-cluster-ca material on hub (and optionally spokes).
+# Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_NAME, CA_BUNDLE_NAMESPACE, CA_BUNDLE_KEY
+- name: S3 SSL CA precheck
+  hosts: localhost
+  gather_facts: true
+  vars:
+    work_dir: "/tmp/s3-ssl-certs"
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    ca_bundle_name: "{{ lookup('env', 'CA_BUNDLE_NAME') | default('vp-pattern-proxy-ca-bundle', true) }}"
+    ca_bundle_namespace: "{{ lookup('env', 'CA_BUNDLE_NAMESPACE') | default('openshift-config', true) }}"
+    ca_bundle_key: "{{ lookup('env', 'CA_BUNDLE_KEY') | default('ca-bundle.crt', true) }}"
+  tasks:
+    - name: Create work directory
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Get hub vp-proxy CA ConfigMap
+      kubernetes.core.k8s_info:
+        kind: ConfigMap
+        name: "{{ ca_bundle_name }}"
+        namespace: "{{ ca_bundle_namespace }}"
+      register: ca_bundle_cm
+      failed_when: false
+
+    - name: Fail when hub vp-proxy CA ConfigMap missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ ca_bundle_namespace }}/{{ ca_bundle_name }} not found on hub.
+          Install/reconcile vp-manage-proxy-cluster-ca, then re-run s3-ssl sync.
+      when: ca_bundle_cm.resources | default([]) | length == 0
+
+    - name: Compute hub CA bytes
+      ansible.builtin.set_fact:
+        hub_ca_bytes: >-
+          {{
+            (
+              ca_bundle_cm.resources[0].data.get(ca_bundle_key)
+              or ca_bundle_cm.resources[0].data.get('ca-bundle.crt')
+              or ''
+            ) | length
+          }}
+
+    - name: Fail when hub CA too small
+      ansible.builtin.fail:
+        msg: >-
+          {{ ca_bundle_namespace }}/{{ ca_bundle_name }} key {{ ca_bundle_key }}
+          has {{ hub_ca_bytes }} bytes (need >= 64). Wait for vp-proxy Bundle reconcile.
+      when: (hub_ca_bytes | int) < 64
+
+    - name: Get hub Proxy trustedCA
+      kubernetes.core.k8s_info:
+        api_version: config.openshift.io/v1
+        kind: Proxy
+        name: cluster
+      register: proxy_cm
+
+    - name: Fail when Proxy.trustedCA does not match vp-proxy ConfigMap
+      ansible.builtin.fail:
+        msg: >-
+          Proxy/cluster.spec.trustedCA.name is
+          '{{ proxy_cm.resources[0].spec.trustedCA.name | default('') }}'
+          (expected {{ ca_bundle_name }}).
+      when: >-
+        (proxy_cm.resources | length == 0)
+        or ((proxy_cm.resources[0].spec.trustedCA.name | default('')) != ca_bundle_name)
+
+    - name: Precheck passed
+      ansible.builtin.debug:
+        msg: "Hub {{ ca_bundle_namespace }}/{{ ca_bundle_name }} OK ({{ hub_ca_bytes }} bytes); Proxy.trustedCA={{ ca_bundle_name }}"

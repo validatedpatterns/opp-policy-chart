@@ -1,0 +1,77 @@
+{{- if and (eq "1" (include "opp.s3CaInjectorEnabled" . | trim)) (((.Values.s3CaInjector | default dict).job | default dict).enabled | default true) }}
+{{- $job := ((.Values.s3CaInjector | default dict).job | default dict) -}}
+{{- $ramen := ((.Values.s3CaInjector | default dict).ramen | default dict) -}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: s3-ca-injector
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: {{ ($job.argoCDSyncWave | default "10") | quote }}
+    argocd.argoproj.io/sync-options: Prune=false
+    checksum/script: {{ .Files.Get "scripts/inject-ramen-s3-ca.sh" | sha256sum }}
+    checksum/playbook: {{ .Files.Get "scripts/ansible/s3-ca-injector.yml" | sha256sum }}
+spec:
+  backoffLimit: {{ $job.backoffLimit | default 5 }}
+  activeDeadlineSeconds: {{ $job.activeDeadlineSeconds | default 14400 }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: s3-ca-injector
+        app.kubernetes.io/component: ramen-s3-ca
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: s3-ca-injector
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: inject
+        image: {{ $.Values.ansible.containerImage }}
+        workingDir: /playbooks
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "768Mi"
+            cpu: "500m"
+        env:
+          {{- include "opp.s3CaInjector.commonEnv" . | nindent 10 }}
+          - name: POLL_INTERVAL
+            value: {{ ($job.pollInterval | default 15) | quote }}
+          - name: CA_WAIT_SECONDS
+            value: {{ ($job.caWaitSeconds | default 3600) | quote }}
+          - name: RAMEN_WAIT_SECONDS
+            value: {{ ($job.ramenWaitSeconds | default 3600) | quote }}
+          - name: ALLOW_MISSING_PROFILES
+            value: {{ ternary "false" "true" ($ramen.failIfNoProfiles | default true) | quote }}
+        command:
+        - ansible-playbook
+        args:
+        - -i
+        - localhost,
+        - -c
+        - local
+        - -v
+        - /playbooks/s3-ca-injector.yml
+        volumeMounts:
+          {{- include "opp.s3CaInjector.volumeMounts" . | nindent 10 }}
+      volumes:
+        {{- include "opp.s3CaInjector.volumes" . | nindent 8 }}
+{{- end }}

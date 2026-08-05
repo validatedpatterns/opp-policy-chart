@@ -1,0 +1,170 @@
+---
+# Inject caCertificates into Ramen s3StoreProfiles from hub vp-proxy differential CA.
+# Hub always; managed clusters when DISTRIBUTE_TO_MANAGED_CLUSTERS=true (default).
+# Skips ConfigMap apply when every profile already has the desired caCertificates.
+# Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_*, RAMEN_*, DISTRIBUTE_TO_MANAGED_CLUSTERS,
+#      ALLOW_MISSING_PROFILES, CA_WAIT_SECONDS, RAMEN_WAIT_SECONDS, POLL_INTERVAL, MIN_PROFILES
+- name: S3 CA inject into Ramen s3StoreProfiles
+  hosts: localhost
+  gather_facts: true
+  vars:
+    work_dir: "/tmp/opp-s3-ca-injector"
+    primary_cluster: "{{ lookup('env', 'PRIMARY_CLUSTER') | default('ocp-primary', true) }}"
+    secondary_cluster: "{{ lookup('env', 'SECONDARY_CLUSTER') | default('ocp-secondary', true) }}"
+    ca_bundle_name: "{{ lookup('env', 'CA_BUNDLE_NAME') | default('vp-pattern-proxy-ca-bundle-differential', true) }}"
+    ca_bundle_namespace: "{{ lookup('env', 'CA_BUNDLE_NAMESPACE') | default('openshift-config', true) }}"
+    ca_bundle_key: "{{ lookup('env', 'CA_BUNDLE_KEY') | default('cabundle', true) }}"
+    ramen_namespace: "{{ lookup('env', 'RAMEN_NAMESPACE') | default('openshift-operators', true) }}"
+    ramen_hub_configmap: "{{ lookup('env', 'RAMEN_HUB_CONFIGMAP') | default('ramen-hub-operator-config', true) }}"
+    ramen_managed_configmap: "{{ lookup('env', 'RAMEN_MANAGED_CONFIGMAP') | default('ramen-dr-cluster-operator-config', true) }}"
+    ramen_config_key: "{{ lookup('env', 'RAMEN_CONFIG_KEY') | default('ramen_manager_config.yaml', true) }}"
+    min_profiles: "{{ lookup('env', 'MIN_PROFILES') | default(1, true) | int }}"
+    poll_interval: "{{ lookup('env', 'POLL_INTERVAL') | default(15, true) | int }}"
+    ca_wait_seconds: "{{ lookup('env', 'CA_WAIT_SECONDS') | default(3600, true) | int }}"
+    ramen_wait_seconds: "{{ lookup('env', 'RAMEN_WAIT_SECONDS') | default(3600, true) | int }}"
+    allow_missing_profiles: "{{ lookup('env', 'ALLOW_MISSING_PROFILES') | default('false', true) }}"
+    distribute_to_managed: >-
+      {{
+        lookup('env', 'DISTRIBUTE_TO_MANAGED_CLUSTERS') | default('true', true)
+        | lower | trim in ['1', 'true', 'yes']
+      }}
+    cluster_readiness_max_attempts: "{{ lookup('env', 'CLUSTER_READINESS_MAX_ATTEMPTS') | default(150, true) | int }}"
+    cluster_readiness_sleep: "{{ lookup('env', 'CLUSTER_READINESS_SLEEP_SECONDS') | default(30, true) | int }}"
+    inject_script: "{{ lookup('env', 'INJECT_SCRIPT') | default('/scripts/inject-ramen-s3-ca.sh', true) }}"
+  tasks:
+    - name: Log job context
+      ansible.builtin.debug:
+        msg:
+          - "s3-ca-injector starting (source=vp-manage-proxy-cluster-ca)"
+          - "ca_bundle={{ ca_bundle_namespace }}/{{ ca_bundle_name }} key={{ ca_bundle_key }}"
+          - "hub_cm={{ ramen_namespace }}/{{ ramen_hub_configmap }}"
+          - "managed_cm={{ ramen_namespace }}/{{ ramen_managed_configmap }}"
+          - "distribute_to_managed={{ distribute_to_managed }}"
+          - "primary={{ primary_cluster }} secondary={{ secondary_cluster }}"
+
+    - name: Create work directory
+      ansible.builtin.file:
+        path: "{{ work_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Read hub vp-proxy CA ConfigMap
+      ansible.builtin.include_tasks: tasks/s3-ssl-read-ca.yml
+      vars:
+        cluster_name: hub
+        output_path: "{{ work_dir }}/ca-bundle.crt"
+        kubeconfig_path: ""
+
+    - name: Inject caCertificates on hub Ramen ConfigMap
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export CA_FILE="{{ work_dir }}/ca-bundle.crt"
+        export CA_NAMESPACE="{{ ca_bundle_namespace }}"
+        export CA_CONFIGMAP="{{ ca_bundle_name }}"
+        export CA_KEY="{{ ca_bundle_key }}"
+        export RAMEN_NAMESPACE="{{ ramen_namespace }}"
+        export RAMEN_CONFIGMAP="{{ ramen_hub_configmap }}"
+        export RAMEN_CONFIG_KEY="{{ ramen_config_key }}"
+        export MIN_PROFILES="{{ min_profiles }}"
+        export POLL_INTERVAL="{{ poll_interval }}"
+        export CA_WAIT_SECONDS="{{ ca_wait_seconds }}"
+        export RAMEN_WAIT_SECONDS="{{ ramen_wait_seconds }}"
+        export ALLOW_MISSING_PROFILES="{{ allow_missing_profiles }}"
+        export WORK_DIR="{{ work_dir }}/hub"
+        unset KUBECONFIG || true
+        mkdir -p "$WORK_DIR"
+        /bin/bash "{{ inject_script }}"
+      args:
+        executable: /bin/bash
+      register: hub_inject
+      changed_when: "'Patched caCertificates' in hub_inject.stdout"
+
+    - name: Wait for both managed clusters to be Available
+      ansible.builtin.include_tasks: tasks/wait-dr-managedclusters-available.yml
+      when: distribute_to_managed | bool
+
+    - name: Get managed clusters
+      kubernetes.core.k8s_info:
+        api_version: cluster.open-cluster-management.io/v1
+        kind: ManagedCluster
+      register: managed_clusters_result
+      when: distribute_to_managed | bool
+
+    - name: Set managed clusters list (exclude local-cluster)
+      ansible.builtin.set_fact:
+        _mc_names: >-
+          {{
+            managed_clusters_result.resources | default([])
+            | map(attribute='metadata.name')
+            | reject('equalto', 'local-cluster')
+            | list
+          }}
+      when: distribute_to_managed | bool
+
+    - name: Require PRIMARY_CLUSTER and SECONDARY_CLUSTER match ManagedCluster names
+      ansible.builtin.fail:
+        msg: >-
+          PRIMARY_CLUSTER={{ primary_cluster }} and SECONDARY_CLUSTER={{ secondary_cluster }} must each match an ACM
+          ManagedCluster (excl. local-cluster). Discovered: {{ _mc_names | join(', ') | default('none', true) }}.
+      when: >-
+        (distribute_to_managed | bool)
+        and (
+          (primary_cluster not in _mc_names)
+          or (secondary_cluster not in _mc_names)
+        )
+
+    - name: Set managed clusters list
+      ansible.builtin.set_fact:
+        managed_clusters: "{{ _mc_names | sort }}"
+      when: distribute_to_managed | bool
+
+    - name: Download kubeconfig for managed cluster
+      ansible.builtin.include_tasks: tasks/kubeconfig-attempt.yml
+      loop: "{{ managed_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      vars:
+        cluster: "{{ item }}"
+        kubeconfig_path: "{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        check_available: false
+      when: distribute_to_managed | bool
+
+    - name: Inject caCertificates on managed-cluster Ramen ConfigMaps
+      ansible.builtin.shell: |
+        set -euo pipefail
+        export CA_FILE="{{ work_dir }}/ca-bundle.crt"
+        export CA_NAMESPACE="{{ ca_bundle_namespace }}"
+        export CA_CONFIGMAP="{{ ca_bundle_name }}"
+        export CA_KEY="{{ ca_bundle_key }}"
+        export RAMEN_NAMESPACE="{{ ramen_namespace }}"
+        export RAMEN_CONFIGMAP="{{ ramen_managed_configmap }}"
+        export RAMEN_CONFIG_KEY="{{ ramen_config_key }}"
+        export MIN_PROFILES="{{ min_profiles }}"
+        export POLL_INTERVAL="{{ poll_interval }}"
+        export CA_WAIT_SECONDS="{{ ca_wait_seconds }}"
+        export RAMEN_WAIT_SECONDS="{{ ramen_wait_seconds }}"
+        export ALLOW_MISSING_PROFILES="{{ allow_missing_profiles }}"
+        export WORK_DIR="{{ work_dir }}/{{ item }}"
+        export KUBECONFIG="{{ work_dir }}/{{ item }}-kubeconfig.yaml"
+        mkdir -p "$WORK_DIR"
+        echo "=== s3-ca-injector: {{ item }} ({{ ramen_managed_configmap }}) ==="
+        /bin/bash "{{ inject_script }}"
+      args:
+        executable: /bin/bash
+      loop: "{{ managed_clusters }}"
+      loop_control:
+        label: "{{ item }}"
+      register: spoke_inject
+      changed_when: "'Patched caCertificates' in item.stdout"
+      when: distribute_to_managed | bool
+
+    - name: s3-ca-injector complete
+      ansible.builtin.debug:
+        msg: >-
+          Hub Ramen profiles checked/patched from vp-proxy differential CA
+          {% if distribute_to_managed | bool %}
+          ; managed clusters also checked/patched ({{ managed_clusters | join(', ') }})
+          {% else %}
+          ; managed-cluster distribution skipped (distributeToManagedClusters=false)
+          {% endif %}
+          (ConfigMap apply skipped when caCertificates already match)

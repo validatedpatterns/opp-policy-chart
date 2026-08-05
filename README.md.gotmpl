@@ -5,11 +5,23 @@
 
 {{ template "chart.description" . }}
 
-This chart is provides ODF and ACM bits to support Regional Disaster Recovery
+Always deployed with **regionaldr-with-virt** (Ramen DR / virt workloads). This chart adds Submariner, s3-ssl CA sync, and Ramen `s3StoreProfiles` CA injection (sourced from **vp-manage-proxy-cluster-ca**) on the hub, with optional distribution to ManagedClusters.
+Also pair with **odf-dr-chart** (MirrorPeer / ODF).
+
+**s3-ssl** sync/precheck/policies use the **full** Proxy trustedCA ConfigMap (`vp-pattern-proxy-ca-bundle` / `ca-bundle.crt`) — the same object `Proxy/cluster.spec.trustedCA` must reference.
+**s3CaInjector** reads the **differential** Bundle (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only), patches `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) uses ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes. Set `distributeToManagedClusters: false` for hub-only.
 
 ## Notable changes
 
-v0.1.0 - Initial release
+v0.1.0 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector; s3-ssl uses the full Proxy trustedCA ConfigMap, s3CaInjector uses the differential Bundle
+
+v0.0.4 - Add Submariner and s3-ssl (from odf-dr); s3-ssl sources CA from vp-proxy ConfigMap
+
+v0.0.3 - Move ObjectBucketClaim and policy-observability-storage to odf-dr chart
+
+v0.0.2 - Remove all ODF templates and scripts and place them separate in odf-dr chart
+
+v0.0.1 - Initial release
 
 {{ template "chart.homepageLine" . }}
 

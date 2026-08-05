@@ -1,0 +1,48 @@
+{{- if eq "1" (include "opp.s3CaInjectorEnabled" . | trim) }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s3-ca-injector
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+---
+# Hub-only permissions. Spoke patches use each cluster's imported kubeconfig (ACM admin-kubeconfig).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: s3-ca-injector
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch", "patch", "update"]
+- apiGroups: ["cluster.open-cluster-management.io"]
+  resources: ["managedclusters"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: s3-ca-injector
+  labels:
+    app.kubernetes.io/name: s3-ca-injector
+    app.kubernetes.io/component: ramen-s3-ca
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: s3-ca-injector
+subjects:
+- kind: ServiceAccount
+  name: s3-ca-injector
+  namespace: {{ include "opp.clusterCaMgtNamespace" . }}
+{{- end }}
