@@ -1,6 +1,6 @@
 # opp-policy-chart
 
-![Version: 0.0.5](https://img.shields.io/badge/Version-0.0.5-informational?style=flat-square)
+![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square)
 
 ACM/OCM policy chart for Submariner, s3-ssl CA sync, and Ramen s3StoreProfiles CA injection (from vp-manage-proxy-cluster-ca) supporting Regional Disaster Recovery.
 
@@ -12,7 +12,7 @@ Also pair with **odf-dr-chart** (MirrorPeer / ODF).
 
 ## Notable changes
 
-v0.0.5 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector; s3-ssl uses the full Proxy trustedCA ConfigMap, s3CaInjector uses the differential Bundle
+v0.1.0 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector; s3-ssl uses the full Proxy trustedCA ConfigMap, s3CaInjector uses the differential Bundle
 
 v0.0.4 - Add Submariner and s3-ssl (from odf-dr); s3-ssl sources CA from vp-proxy ConfigMap
 
