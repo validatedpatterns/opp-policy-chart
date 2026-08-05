@@ -24,6 +24,10 @@ rules:
 - apiGroups: [""]
   resources: ["configmaps", "secrets"]
   verbs: ["get", "list", "watch", "patch", "update"]
+# Restart Ramen operator pods after caCertificates patch (hub SA only; spokes use ACM kubeconfigs).
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "delete"]
 - apiGroups: ["cluster.open-cluster-management.io"]
   resources: ["managedclusters"]
   verbs: ["get", "list"]
