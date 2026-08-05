@@ -46,7 +46,8 @@ check_submariner_health() {
 	fi
 
 	# Check if Submariner operator is running
-	local submariner_operator_pods=$(oc --kubeconfig="$kubeconfig" get pods -n submariner-operator --no-headers 2>/dev/null | grep -c "Running" || echo "0")
+	local submariner_operator_pods
+	submariner_operator_pods=$(oc --kubeconfig="$kubeconfig" get pods -n submariner-operator --no-headers 2>/dev/null | grep -c "Running" || echo "0")
 	submariner_operator_pods=$(echo "$submariner_operator_pods" | tr -d ' \n')
 	if [[ $submariner_operator_pods -eq 0 ]]; then
 		echo "Submariner operator not running on $cluster"
@@ -54,7 +55,8 @@ check_submariner_health() {
 	fi
 
 	# Check Submariner gateway nodes
-	local gateway_nodes=$(oc --kubeconfig="$kubeconfig" get nodes -l submariner.io/gateway=true --no-headers 2>/dev/null | wc -l)
+	local gateway_nodes
+	gateway_nodes=$(oc --kubeconfig="$kubeconfig" get nodes -l submariner.io/gateway=true --no-headers 2>/dev/null | wc -l)
 	if [[ $gateway_nodes -eq 0 ]]; then
 		echo "No Submariner gateway nodes found on $cluster"
 		return 1
@@ -69,8 +71,10 @@ check_submariner_connectivity() {
 	echo "Checking Submariner connectivity between $PRIMARY_CLUSTER and $SECONDARY_CLUSTER..."
 
 	# Check Submariner clusters on hub cluster
-	local primary_cluster_id=$(oc get clusters.submariner.io "$PRIMARY_CLUSTER" -n "$SUBMARINER_BROKER_NAMESPACE" -o jsonpath='{.spec.cluster_id}' 2>/dev/null || echo "")
-	local secondary_cluster_id=$(oc get clusters.submariner.io "$SECONDARY_CLUSTER" -n "$SUBMARINER_BROKER_NAMESPACE" -o jsonpath='{.spec.cluster_id}' 2>/dev/null || echo "")
+	local primary_cluster_id
+	primary_cluster_id=$(oc get clusters.submariner.io "$PRIMARY_CLUSTER" -n "$SUBMARINER_BROKER_NAMESPACE" -o jsonpath='{.spec.cluster_id}' 2>/dev/null || echo "")
+	local secondary_cluster_id
+	secondary_cluster_id=$(oc get clusters.submariner.io "$SECONDARY_CLUSTER" -n "$SUBMARINER_BROKER_NAMESPACE" -o jsonpath='{.spec.cluster_id}' 2>/dev/null || echo "")
 
 	if [[ -z "$primary_cluster_id" || -z "$secondary_cluster_id" ]]; then
 		echo "Could not retrieve cluster IDs from Submariner"
@@ -98,7 +102,8 @@ download_kubeconfig() {
 	echo "Downloading kubeconfig for $cluster..."
 
 	# Get the kubeconfig secret name (same approach as download-kubeconfigs.sh)
-	local kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
+	local kubeconfig_secret
+	kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
 
 	if [[ -z "$kubeconfig_secret" ]]; then
 		echo "No kubeconfig secret found for cluster $cluster"

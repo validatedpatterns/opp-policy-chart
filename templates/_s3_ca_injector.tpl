@@ -45,7 +45,7 @@
   configMap:
     name: s3-ca-injector-playbooks
     items:
-    - key: s3-ca-injector.yml
+    - key: s3-ca-injector.yml # gitleaks:allow ConfigMap key name, not a credential
       path: s3-ca-injector.yml
     - key: tasks_kubeconfig.yml
       path: tasks/kubeconfig.yml

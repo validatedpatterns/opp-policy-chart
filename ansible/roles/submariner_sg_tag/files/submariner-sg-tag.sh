@@ -44,14 +44,16 @@ download_kubeconfig() {
 	echo "Downloading kubeconfig for $cluster..." >&2
 
 	# Check if cluster is available (same as download-kubeconfigs.sh)
-	local cluster_status=$(oc get managedcluster "$cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null || echo "Unknown")
+	local cluster_status
+	cluster_status=$(oc get managedcluster "$cluster" -o jsonpath='{.status.conditions[?(@.type=="ManagedClusterConditionAvailable")].status}' 2>/dev/null || echo "Unknown")
 	if [[ "$cluster_status" != "True" ]]; then
 		echo "  ⚠️  Cluster $cluster is not available (status: $cluster_status), skipping..." >&2
 		return 1
 	fi
 
 	# Get the kubeconfig secret name (same method as download-kubeconfigs.sh)
-	local kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
+	local kubeconfig_secret
+	kubeconfig_secret=$(oc get secret -n "$cluster" -o name | grep -E "(admin-kubeconfig|kubeconfig)" | head -1)
 
 	if [[ -z "$kubeconfig_secret" ]]; then
 		echo "  ❌ No kubeconfig secret found for cluster $cluster" >&2
@@ -140,7 +142,8 @@ get_infrastructure_name() {
 		if oc get secret "$install_config_secret" -n "$cluster" &>/dev/null; then
 			# The infrastructure name is typically the cluster name with a random suffix
 			# Try to get it from the metadata name in install-config
-			local cluster_name_from_config=$(oc get secret "$install_config_secret" -n "$cluster" -o jsonpath='{.data.install-config\.yaml}' 2>/dev/null |
+			local cluster_name_from_config
+			cluster_name_from_config=$(oc get secret "$install_config_secret" -n "$cluster" -o jsonpath='{.data.install-config\.yaml}' 2>/dev/null |
 				base64 -d 2>/dev/null | grep -E '^\s*metadata:' -A 5 | grep -E '^\s*name:' | awk '{print $2}' | tr -d '"' || echo "")
 			if [[ -n "$cluster_name_from_config" ]]; then
 				# Infrastructure name is usually cluster name with a random suffix
@@ -236,7 +239,8 @@ get_aws_credentials() {
 	if [[ -z "$aws_region" && -n "$aws_access_key" && -n "$aws_secret_key" ]]; then
 		echo "  Trying to detect region from AWS resources..."
 		# Get infrastructure name first (we'll need it to find cluster resources)
-		local temp_infra_name=$(oc --kubeconfig="$kubeconfig" get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null || echo "")
+		local temp_infra_name
+		temp_infra_name=$(oc --kubeconfig="$kubeconfig" get infrastructure cluster -o jsonpath='{.status.infrastructureName}' 2>/dev/null || echo "")
 
 		if [[ -n "$temp_infra_name" ]]; then
 			# Temporarily set credentials
@@ -244,14 +248,16 @@ get_aws_credentials() {
 			export AWS_SECRET_ACCESS_KEY="$aws_secret_key"
 
 			# Get list of all available regions
-			local available_regions=$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text 2>/dev/null || echo "")
+			local available_regions
+			available_regions=$(aws ec2 describe-regions --query 'Regions[].RegionName' --output text 2>/dev/null || echo "")
 
 			if [[ -n "$available_regions" ]]; then
 				# Search for VPCs or security groups tagged with the cluster infrastructure name
 				for test_region in $available_regions; do
 					export AWS_DEFAULT_REGION="$test_region"
 					# Look for VPCs with tags matching the cluster infrastructure name
-					local vpc_found=$(aws ec2 describe-vpcs \
+					local vpc_found
+					vpc_found=$(aws ec2 describe-vpcs \
 						--filters "Name=tag:Name,Values=${temp_infra_name}*" \
 						--query 'Vpcs[0].VpcId' \
 						--output text 2>/dev/null || echo "")
@@ -322,7 +328,8 @@ find_submariner_security_group() {
 	# Method 4: Look for security groups that are part of the cluster's VPC and have submariner-related names
 	if [[ -z "$sg_id" || "$sg_id" == "None" ]]; then
 		# Get VPC ID from cluster infrastructure
-		local vpc_id=$(oc --kubeconfig="$KUBECONFIG_DIR/${cluster}-kubeconfig.yaml" get infrastructure cluster -o jsonpath='{.status.platformStatus.aws.vpc}' 2>/dev/null || echo "")
+		local vpc_id
+		vpc_id=$(oc --kubeconfig="$KUBECONFIG_DIR/${cluster}-kubeconfig.yaml" get infrastructure cluster -o jsonpath='{.status.platformStatus.aws.vpc}' 2>/dev/null || echo "")
 
 		if [[ -n "$vpc_id" && "$vpc_id" != "None" ]]; then
 			sg_id=$(aws ec2 describe-security-groups \
