@@ -135,6 +135,12 @@ checksum/opp-policy-ansible: {{ include "opp.ansibleConfigChecksum" . | quote }}
 {{- $r.namespace | default "openshift-operators" -}}
 {{- end -}}
 
+{{- define "opp.ramenManagedNamespace" -}}
+{{- $inj := .Values.s3CaInjector | default dict -}}
+{{- $r := $inj.ramen | default dict -}}
+{{- $r.managedNamespace | default "openshift-dr-system" -}}
+{{- end -}}
+
 {{- define "opp.ramenHubConfigMapName" -}}
 {{- $inj := .Values.s3CaInjector | default dict -}}
 {{- $r := $inj.ramen | default dict -}}
