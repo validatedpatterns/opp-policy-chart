@@ -13,6 +13,8 @@
   value: {{ include "opp.s3CaInjectorCaBundleKey" . | quote }}
 - name: RAMEN_NAMESPACE
   value: {{ include "opp.ramenNamespace" . | quote }}
+- name: RAMEN_MANAGED_NAMESPACE
+  value: {{ include "opp.ramenManagedNamespace" . | quote }}
 - name: RAMEN_HUB_CONFIGMAP
   value: {{ include "opp.ramenHubConfigMapName" . | quote }}
 - name: RAMEN_MANAGED_CONFIGMAP

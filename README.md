@@ -1,6 +1,6 @@
 # opp-policy-chart
 
-![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-informational?style=flat-square)
+![Version: 0.1.2](https://img.shields.io/badge/Version-0.1.2-informational?style=flat-square)
 
 ACM/OCM policy chart for Submariner, s3-ssl CA sync, and Ramen s3StoreProfiles CA injection (from vp-manage-proxy-cluster-ca) supporting Regional Disaster Recovery.
 
@@ -8,9 +8,11 @@ Always deployed with **regionaldr-with-virt** (Ramen DR / virt workloads). This 
 Also pair with **odf-dr-chart** (MirrorPeer / ODF).
 
 **s3-ssl** sync/precheck/policies use the **full** Proxy trustedCA ConfigMap (`vp-pattern-proxy-ca-bundle` / `ca-bundle.crt`) — the same object `Proxy/cluster.spec.trustedCA` must reference.
-**s3CaInjector** reads the **differential** Bundle (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only), patches `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) uses ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes. After a successful patch it restarts Ramen operator pods so they reload cluster Proxy trust (profile `caCertificates` alone are not used by Ramen `ListKeys`). Set `distributeToManagedClusters: false` for hub-only.
+**s3CaInjector** reads the **differential** Bundle (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only), patches hub `openshift-operators/ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) uses ACM kubeconfigs to patch spoke `openshift-dr-system/ramen-dr-cluster-operator-config`. After a successful patch it restarts Ramen operator pods so they reload cluster Proxy trust (profile `caCertificates` alone are not used by Ramen `ListKeys`). Set `distributeToManagedClusters: false` for hub-only.
 
 ## Notable changes
+
+v0.1.2 - Patch spoke Ramen ConfigMaps in `openshift-dr-system` (`s3CaInjector.ramen.managedNamespace`); hub remains `openshift-operators`
 
 v0.1.1 - Restart Ramen operator pods after s3CaInjector patches caCertificates (reload Proxy trustedCA for DRCluster S3 validation)
 
@@ -63,8 +65,9 @@ v0.0.1 - Initial release
 | s3CaInjector.ramen.failIfNoProfiles | bool | `true` | When true, fail the one-shot Job if profiles never appear. CronJob soft-exits. |
 | s3CaInjector.ramen.hubConfigMapName | string | `"ramen-hub-operator-config"` | Hub Ramen ConfigMap name. |
 | s3CaInjector.ramen.managedConfigMapName | string | `"ramen-dr-cluster-operator-config"` | Managed-cluster Ramen ConfigMap name. |
+| s3CaInjector.ramen.managedNamespace | string | `"openshift-dr-system"` | Namespace of managed-cluster Ramen operator ConfigMaps (dr-cluster operator). |
 | s3CaInjector.ramen.minProfiles | int | `2` | Minimum s3StoreProfiles before patching. |
-| s3CaInjector.ramen.namespace | string | `"openshift-operators"` | Namespace of hub and managed Ramen operator ConfigMaps. |
+| s3CaInjector.ramen.namespace | string | `"openshift-operators"` | Namespace of the hub Ramen operator ConfigMap. |
 | s3Ssl.caBundle.key | string | `"ca-bundle.crt"` | Data key holding PEM for Proxy trustedCA (usually ca-bundle.crt). |
 | s3Ssl.caBundle.name | string | `"vp-pattern-proxy-ca-bundle"` | Full Proxy trustedCA ConfigMap (vp-manage-proxy-cluster-ca configMapName). Not the differential Bundle. |
 | s3Ssl.caBundle.namespace | string | `"openshift-config"` | Namespace of the vp-proxy trust ConfigMap (vp-manage-proxy-cluster-ca targetNamespace). |

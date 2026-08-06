@@ -72,8 +72,10 @@ s3CaInjector:
     # -- Data key holding PEM (differentialBundle.targetKey; must not contain '.').
     key: cabundle
   ramen:
-    # -- Namespace of hub and managed Ramen operator ConfigMaps.
+    # -- Namespace of the hub Ramen operator ConfigMap.
     namespace: openshift-operators
+    # -- Namespace of managed-cluster Ramen operator ConfigMaps (dr-cluster operator).
+    managedNamespace: openshift-dr-system
     # -- Hub Ramen ConfigMap name.
     hubConfigMapName: ramen-hub-operator-config
     # -- Managed-cluster Ramen ConfigMap name.

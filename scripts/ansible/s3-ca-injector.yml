@@ -3,7 +3,8 @@
 # Hub always; managed clusters when DISTRIBUTE_TO_MANAGED_CLUSTERS=true (default).
 # Skips ConfigMap apply when every profile already has the desired caCertificates.
 # On patch, inject-ramen-s3-ca.sh restarts Ramen operator pods so they reload Proxy trust.
-# Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_*, RAMEN_*, DISTRIBUTE_TO_MANAGED_CLUSTERS,
+# Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_*, RAMEN_NAMESPACE (hub),
+#      RAMEN_MANAGED_NAMESPACE (spokes), RAMEN_*_CONFIGMAP, DISTRIBUTE_TO_MANAGED_CLUSTERS,
 #      ALLOW_MISSING_PROFILES, CA_WAIT_SECONDS, RAMEN_WAIT_SECONDS, POLL_INTERVAL, MIN_PROFILES
 - name: S3 CA inject into Ramen s3StoreProfiles
   hosts: localhost
@@ -16,6 +17,7 @@
     ca_bundle_namespace: "{{ lookup('env', 'CA_BUNDLE_NAMESPACE') | default('openshift-config', true) }}"
     ca_bundle_key: "{{ lookup('env', 'CA_BUNDLE_KEY') | default('cabundle', true) }}"
     ramen_namespace: "{{ lookup('env', 'RAMEN_NAMESPACE') | default('openshift-operators', true) }}"
+    ramen_managed_namespace: "{{ lookup('env', 'RAMEN_MANAGED_NAMESPACE') | default('openshift-dr-system', true) }}"
     ramen_hub_configmap: "{{ lookup('env', 'RAMEN_HUB_CONFIGMAP') | default('ramen-hub-operator-config', true) }}"
     ramen_managed_configmap: "{{ lookup('env', 'RAMEN_MANAGED_CONFIGMAP') | default('ramen-dr-cluster-operator-config', true) }}"
     ramen_config_key: "{{ lookup('env', 'RAMEN_CONFIG_KEY') | default('ramen_manager_config.yaml', true) }}"
@@ -39,7 +41,7 @@
           - "s3-ca-injector starting (source=vp-manage-proxy-cluster-ca)"
           - "ca_bundle={{ ca_bundle_namespace }}/{{ ca_bundle_name }} key={{ ca_bundle_key }}"
           - "hub_cm={{ ramen_namespace }}/{{ ramen_hub_configmap }}"
-          - "managed_cm={{ ramen_namespace }}/{{ ramen_managed_configmap }}"
+          - "managed_cm={{ ramen_managed_namespace }}/{{ ramen_managed_configmap }}"
           - "distribute_to_managed={{ distribute_to_managed }}"
           - "primary={{ primary_cluster }} secondary={{ secondary_cluster }}"
 
@@ -137,7 +139,7 @@
         export CA_NAMESPACE="{{ ca_bundle_namespace }}"
         export CA_CONFIGMAP="{{ ca_bundle_name }}"
         export CA_KEY="{{ ca_bundle_key }}"
-        export RAMEN_NAMESPACE="{{ ramen_namespace }}"
+        export RAMEN_NAMESPACE="{{ ramen_managed_namespace }}"
         export RAMEN_CONFIGMAP="{{ ramen_managed_configmap }}"
         export RAMEN_CONFIG_KEY="{{ ramen_config_key }}"
         export MIN_PROFILES="{{ min_profiles }}"
@@ -148,7 +150,7 @@
         export WORK_DIR="{{ work_dir }}/{{ item }}"
         export KUBECONFIG="{{ work_dir }}/{{ item }}-kubeconfig.yaml"
         mkdir -p "$WORK_DIR"
-        echo "=== s3-ca-injector: {{ item }} ({{ ramen_managed_configmap }}) ==="
+        echo "=== s3-ca-injector: {{ item }} ({{ ramen_managed_namespace }}/{{ ramen_managed_configmap }}) ==="
         /bin/bash "{{ inject_script }}"
       args:
         executable: /bin/bash
@@ -156,10 +158,10 @@
       loop_control:
         label: "{{ item }}"
       register: spoke_inject
-      changed_when: "'Patched caCertificates' in item.stdout"
+      changed_when: "'Patched caCertificates' in spoke_inject.stdout"
       when: distribute_to_managed | bool
 
-    - name: s3-ca-injector complete
+    - name: S3 CA injector complete
       ansible.builtin.debug:
         msg: >-
           Hub Ramen profiles checked/patched from vp-proxy differential CA
