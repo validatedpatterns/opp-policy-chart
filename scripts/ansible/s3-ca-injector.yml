@@ -80,7 +80,7 @@
       args:
         executable: /bin/bash
       register: hub_inject
-      changed_when: "'Patched caCertificates' in stdout"
+      changed_when: "'Patched caCertificates' in hub_inject.stdout"
 
     - name: Wait for both managed clusters to be Available
       ansible.builtin.include_tasks: tasks/wait-dr-managedclusters-available.yml
@@ -158,7 +158,7 @@
       loop_control:
         label: "{{ item }}"
       register: spoke_inject
-      changed_when: "'Patched caCertificates' in stdout"
+      changed_when: "'Patched caCertificates' in spoke_inject.stdout"
       when: distribute_to_managed | bool
 
     - name: S3 CA injector complete
