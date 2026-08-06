@@ -3,6 +3,8 @@
 # Prefer CA_FILE (hub-read PEM shared across targets). Else wait for CA ConfigMap in-cluster.
 # Never creates profiles. Soft-exit when ALLOW_MISSING_PROFILES=true and profiles are absent.
 # Skips ConfigMap apply when every profile already has the desired caCertificates value.
+# After a successful patch, restarts Ramen operator pods so they reload process trust
+# (Proxy trustedCA). Profile caCertificates alone are not used by Ramen ListKeys.
 # Honors KUBECONFIG for managed-cluster targets (empty/unset = hub in-cluster).
 set -euo pipefail
 
@@ -218,13 +220,34 @@ verify_patch() {
 	die "post-apply verification failed for ${RAMEN_NAMESPACE}/${RAMEN_CONFIGMAP}"
 }
 
+# Ramen's S3 ListKeys client uses the process trust store (cluster Proxy trustedCA),
+# not s3StoreProfiles.caCertificates. Restart operators after we patch so pods
+# remount/reload trust that s3-ssl / vp-proxy just distributed.
+restart_ramen_operators() {
+	local ns label pods
+	local -a labels=("app=ramen-hub-operator" "app=ramen-dr-cluster-operator")
+
+	log "Restarting Ramen operator pods after caCertificates patch..."
+	for ns in openshift-operators openshift-dr-system; do
+		for label in "${labels[@]}"; do
+			pods=$(oc get pods -n "$ns" -l "$label" -o name 2>/dev/null || true)
+			if [[ -n "$pods" ]]; then
+				log "  Deleting ${label} pods in ${ns}"
+				# shellcheck disable=SC2086
+				oc delete -n "$ns" $pods --ignore-not-found=true || true
+			fi
+		done
+	done
+}
+
 resolve_ca_bundle
 wait_for_ramen_profiles
 rm -f "$WORK_DIR/.ca-patched"
 patch_profiles
 if [[ -f "$WORK_DIR/.ca-patched" ]]; then
 	verify_patch
+	restart_ramen_operators
 else
-	log "Skip verify (no ConfigMap apply)"
+	log "Skip verify and restart (no ConfigMap apply)"
 fi
 log "Done."

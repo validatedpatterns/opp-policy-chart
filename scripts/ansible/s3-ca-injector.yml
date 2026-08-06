@@ -2,6 +2,7 @@
 # Inject caCertificates into Ramen s3StoreProfiles from hub vp-proxy differential CA.
 # Hub always; managed clusters when DISTRIBUTE_TO_MANAGED_CLUSTERS=true (default).
 # Skips ConfigMap apply when every profile already has the desired caCertificates.
+# On patch, inject-ramen-s3-ca.sh restarts Ramen operator pods so they reload Proxy trust.
 # Env: PRIMARY_CLUSTER, SECONDARY_CLUSTER, CA_BUNDLE_*, RAMEN_*, DISTRIBUTE_TO_MANAGED_CLUSTERS,
 #      ALLOW_MISSING_PROFILES, CA_WAIT_SECONDS, RAMEN_WAIT_SECONDS, POLL_INTERVAL, MIN_PROFILES
 - name: S3 CA inject into Ramen s3StoreProfiles
@@ -167,4 +168,5 @@
           {% else %}
           ; managed-cluster distribution skipped (distributeToManagedClusters=false)
           {% endif %}
-          (ConfigMap apply skipped when caCertificates already match)
+          (ConfigMap apply skipped when caCertificates already match;
+          Ramen operator pods restarted when a patch was applied)

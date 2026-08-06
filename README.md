@@ -1,6 +1,6 @@
 # opp-policy-chart
 
-![Version: 0.1.0](https://img.shields.io/badge/Version-0.1.0-informational?style=flat-square)
+![Version: 0.1.1](https://img.shields.io/badge/Version-0.1.1-informational?style=flat-square)
 
 ACM/OCM policy chart for Submariner, s3-ssl CA sync, and Ramen s3StoreProfiles CA injection (from vp-manage-proxy-cluster-ca) supporting Regional Disaster Recovery.
 
@@ -8,9 +8,11 @@ Always deployed with **regionaldr-with-virt** (Ramen DR / virt workloads). This 
 Also pair with **odf-dr-chart** (MirrorPeer / ODF).
 
 **s3-ssl** sync/precheck/policies use the **full** Proxy trustedCA ConfigMap (`vp-pattern-proxy-ca-bundle` / `ca-bundle.crt`) — the same object `Proxy/cluster.spec.trustedCA` must reference.
-**s3CaInjector** reads the **differential** Bundle (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only), patches `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) uses ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes. Set `distributeToManagedClusters: false` for hub-only.
+**s3CaInjector** reads the **differential** Bundle (`vp-pattern-proxy-ca-bundle-differential` / `cabundle` — hub + spoke API/ingress CAs only), patches `ramen-hub-operator-config`, then (when `s3CaInjector.distributeToManagedClusters` is true) uses ACM kubeconfigs to patch `ramen-dr-cluster-operator-config` on spokes. After a successful patch it restarts Ramen operator pods so they reload cluster Proxy trust (profile `caCertificates` alone are not used by Ramen `ListKeys`). Set `distributeToManagedClusters: false` for hub-only.
 
 ## Notable changes
+
+v0.1.1 - Restart Ramen operator pods after s3CaInjector patches caCertificates (reload Proxy trustedCA for DRCluster S3 validation)
 
 v0.1.0 - Fold s3-ca-injector into this chart (hub + optional spoke inject via ACM kubeconfigs); prefer over standalone vp-ramen-s3-ca-injector; s3-ssl uses the full Proxy trustedCA ConfigMap, s3CaInjector uses the differential Bundle
 
